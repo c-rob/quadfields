@@ -1,5 +1,11 @@
 ## Project specific
-/Examples
+
+# Include the source files of the plugin
+/symsplugin/*
+!/symsplugin/*.sh
+!/symsplugin/*.py
+!/symsplugin/*.cpp
+!/symsplugin/*.h
 
 
 ## Vim related
