@@ -6,6 +6,9 @@
 !/symsplugin/*.py
 !/symsplugin/*.cpp
 !/symsplugin/*.h
+!/symsplugin/*.hpp
+!/symsplugin/Makefile
+!/symsplugin/README
 
 
 ## Vim related
