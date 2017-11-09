@@ -1,8 +1,0 @@
-This is a V-REP plugin for small symbolic computations written in c++
-It implements equation 11 of paper:
-Vector Field Following for Quadrotors using Differential Flatness
-Dingjiang Zhou and Mac Schwager
-
-Dependencies:
-	libginac
-	libcln

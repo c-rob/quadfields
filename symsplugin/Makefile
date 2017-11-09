@@ -1,7 +1,7 @@
 # Vrep plugin makefile
 
 # vrep install directory
-VREPDIR=/home/roberto/bin/V-REP
+VREPDIR=~/bin/V-REP
 
 CXX=gcc
 CXXFLAGS=-x c++ -std=c++11 -Wall -Wextra -O3 -fPIC
@@ -14,22 +14,21 @@ DESTEXE=repExtSymDeriv
 DESTLIB=libv_repExtSymDeriv.so
 OBJECTS=$(SOURCES:.cpp=.o)
 INCLUDESDIR=-I./vrep/include/ -I./vrep/include/stack/
-LIBSDIR=-L$(VREPDIR)
 
-.PHONY: mkexe mklib compile clean
+.PHONY: mkexe mklib clean install
 
-compile: mklib
+install: mklib
+	cp $(DESTLIB) $(VREPDIR)/
 
 mkexe: $(DESTEXE)
 
 mklib: $(DESTLIB)
 
 $(DESTEXE): $(OBJECTS)
-	$(CXX) $(LIBSDIR) -o $(DESTEXE) $(OBJECTS) $(LDFLAGS)
+	$(CXX) -o $(DESTEXE) $(OBJECTS) $(LDFLAGS)
 
 $(DESTLIB): $(OBJECTS)
-	$(CXX) -shared -Wl,-soname,$(DESTLIB) $(LIBSDIR) -o $(DESTLIB) $(OBJECTS) $(LDFLAGS)
-	cp $(DESTLIB) $(VREPDIR)/
+	$(CXX) -shared -Wl,-soname,$(DESTLIB) -o $(DESTLIB) $(OBJECTS) $(LDFLAGS)
 
 %.o: %.cpp $(INCLUDES)
 	$(CXX) -c $(CXXFLAGS) $(INCLUDESDIR) -o $@ $<
