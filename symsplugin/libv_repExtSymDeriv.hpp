@@ -8,8 +8,15 @@
 #endif
 
 
-#include "v_repLib.h"
 #include <iostream>
+#include "v_repLib.h"
+#include "luaFunctionData.h"
+#include "stack/stackArray.h"
+#include "stack/stackBool.h"
+#include "stack/stackNull.h"
+#include "stack/stackNumber.h"
+#include "stack/stackString.h"
+
 
 #ifdef _WIN32
     #ifdef QT_COMPIL

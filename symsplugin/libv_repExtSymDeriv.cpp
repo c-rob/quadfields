@@ -5,16 +5,34 @@
 #define CONCAT(x,y,z) x y z
 #define strConCat(x,y,z)    CONCAT(x,y,z)
 
+using namespace std;
 
 LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 
 // --------------------------------------------------------------------------------------
-// simExtSkeleton_getData: an example of custom Lua command
+// simExtSymDeriv_print
 // --------------------------------------------------------------------------------------
-#define LUA_GETDATA_COMMAND "simExtSkeleton_getData" // the name of the new Lua command
+#define LUA_GETDATA_COMMAND "simExtSymDeriv_print"
 
-void LUA_GETDATA_CALLBACK(SScriptCallBack* p)
-{ // the callback function of the new Lua command ("simExtSkeleton_getData")
+void LUA_PRINT_CALLBACK(SScriptCallBack* p)
+{ 
+	
+    int stack = p->stackID;
+    CStackArray inArguments;
+    inArguments.buildFromStack(stack);
+
+    if ( (inArguments.getSize()>=1) && inArguments.isString(0) )
+    {
+        string printMsg = inArguments.getString(0);
+		cout << "Hello plugin: " << printMsg << std::endl;
+    }
+    else
+        simSetLastError(LUA_GETDATA_COMMAND,"Not enough arguments or wrong arguments.");
+
+    // Now return a string and a map:
+    CStackArray outArguments;
+    outArguments.pushString("Hello World");
+    outArguments.buildOntoStack(stack);
 }
 // --------------------------------------------------------------------------------------
 
@@ -70,7 +88,7 @@ VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
     }
 
     // Register the new Lua command "simExtSkeleton_getData":
-    simRegisterScriptCallbackFunction(strConCat(LUA_GETDATA_COMMAND,"@","PluginSkeleton"),strConCat("...=",LUA_GETDATA_COMMAND,"(string data1,map data2)"),LUA_GETDATA_CALLBACK);
+    simRegisterScriptCallbackFunction(strConCat(LUA_GETDATA_COMMAND,"@","SymDeriv"),strConCat("string result=",LUA_GETDATA_COMMAND,"(string print)"),LUA_PRINT_CALLBACK);
 
     return(PLUGIN_VERSION); // initialization went fine, we return the version number of this plugin (can be queried with simGetModuleName)
 }
