@@ -9,8 +9,11 @@
 
 
 #include <iostream>
+#include <fstream>
+#include <ginac/ginac.h>
 #include "v_repLib.h"
 #include "luaFunctionData.h"
+#include "scriptFunctionData.h"
 #include "stack/stackArray.h"
 #include "stack/stackBool.h"
 #include "stack/stackNull.h"

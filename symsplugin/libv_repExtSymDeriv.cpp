@@ -5,36 +5,126 @@
 #define CONCAT(x,y,z) x y z
 #define strConCat(x,y,z)    CONCAT(x,y,z)
 
+using namespace GiNaC;
 using namespace std;
 
 LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 
+// declaration
+void getFlatOutDerivatives(string s, float x, float y, float z, float yaw);
+
 // --------------------------------------------------------------------------------------
 // simExtSymDeriv_print
 // --------------------------------------------------------------------------------------
-#define LUA_GETDATA_COMMAND "simExtSymDeriv_print"
+#define LUA_PRINT_COMMAND "simExtSymDeriv_print"
 
-void LUA_PRINT_CALLBACK(SScriptCallBack* p)
+const int inArgs_PRINT[]={
+    5,
+	sim_script_arg_string,1,
+    sim_script_arg_float,1,
+    sim_script_arg_float,1,
+    sim_script_arg_float,1,
+    sim_script_arg_float,1
+};
+ 
+
+void LUA_PRINT_CALLBACK(SScriptCallBack* cb)
 { 
-	
-    int stack = p->stackID;
-    CStackArray inArguments;
-    inArguments.buildFromStack(stack);
-
-    if ( (inArguments.getSize()>=1) && inArguments.isString(0) )
+    CScriptFunctionData D;
+    if (D.readDataFromStack(cb->stackID,inArgs_PRINT,inArgs_PRINT[0],LUA_PRINT_COMMAND))
     {
-        string printMsg = inArguments.getString(0);
-		cout << "Hello plugin: " << printMsg << std::endl;
-    }
-    else
-        simSetLastError(LUA_GETDATA_COMMAND,"Not enough arguments or wrong arguments.");
+        std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
+		string fileName = inData->at(0).stringData[0];
+		float x = inData->at(1).floatData[1];
+		float y = inData->at(2).floatData[2];
+		float z = inData->at(3).floatData[3];
+		float yaw = inData->at(4).floatData[4];
 
-    // Now return a string and a map:
-    CStackArray outArguments;
-    outArguments.pushString("Hello World");
-    outArguments.buildOntoStack(stack);
+		// Get flat output derivatives
+		getFlatOutDerivatives(fileName, x, y, z, yaw);
+    }
+    D.pushOutData(CScriptFunctionDataItem(66));
+    D.writeDataToStack(cb->stackID);
 }
 // --------------------------------------------------------------------------------------
+
+
+// given the vector of the variables, the symbolic vector src in inputs
+// computes the next derivative through dv = J_v * v
+void genNextDerivative(const vector <symbol> vars, const matrix& src, matrix& dest) {
+
+	unsigned nVars = vars.size();
+	matrix jacob(nVars, nVars);
+	for (unsigned r = 0; r < nVars; ++r) {
+		for (unsigned c = 0; c < nVars; ++c) {
+			jacob(r, c) = src[r].diff(vars.at(c));
+		}
+	}
+
+	dest = jacob.mul(src);
+}
+
+
+void getFlatOutDerivatives(string fieldFilePath, float x, float y, float z, float yaw)
+{
+	string line;
+	ifstream vectFile;
+	vector<string> vectFieldStr;
+	int nVars = 0;
+
+	// File open
+	try {
+		vectFile.open(fieldFilePath, ifstream::in);
+	} catch (ifstream::failure e) {
+		cout << e.what();
+		return;
+	}
+
+	// result objects
+	matrix flatOut_D1;
+	matrix flatOut_D2;
+	matrix flatOut_D3;
+	matrix flatOut_D4;
+
+	// Prepare the GiNaC parser
+	symbol Sx("x");
+	symbol Sy("y");
+	symbol Sz("z");
+	symbol Syaw("w");
+	symtab table;
+	vector <symbol> vars = {Sx, Sy, Sz, Syaw};
+	table["x"] = Sx;
+	table["y"] = Sy;
+	table["z"] = Sz;
+	table["w"] = Syaw;
+	parser reader(table);
+
+	// Get the first lines in the file as a vector
+	while (getline(vectFile, line)) {
+		vectFieldStr.push_back(line);
+		++nVars;
+	}
+	vectFile.close();
+	vars.erase(vars.begin()+nVars, vars.end());
+
+	// Fill a symbolic matrix
+	matrix vectFieldSym(nVars, 1);
+	for (int i = 0; i < nVars; ++i) {
+		ex e = reader(vectFieldStr[i]);
+		vectFieldSym.set(i, 0, e);
+	}
+
+	// Save the first flat output derivative d(sigma)/dt=V(x)
+	flatOut_D1 = vectFieldSym;
+
+	// Compute next derivatives
+	genNextDerivative(vars, flatOut_D1, flatOut_D2);
+	genNextDerivative(vars, flatOut_D2, flatOut_D3);
+	genNextDerivative(vars, flatOut_D3, flatOut_D4);
+	
+}
+
+
 
 // This is the plugin start routine (called just once, just after the plugin was loaded):
 VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
@@ -88,7 +178,7 @@ VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
     }
 
     // Register the new Lua command "simExtSkeleton_getData":
-    simRegisterScriptCallbackFunction(strConCat(LUA_GETDATA_COMMAND,"@","SymDeriv"),strConCat("string result=",LUA_GETDATA_COMMAND,"(string print)"),LUA_PRINT_CALLBACK);
+    simRegisterScriptCallbackFunction(strConCat(LUA_PRINT_COMMAND,"@","SymDeriv"),strConCat("string result=",LUA_PRINT_COMMAND,"(number x)"),LUA_PRINT_CALLBACK);
 
     return(PLUGIN_VERSION); // initialization went fine, we return the version number of this plugin (can be queried with simGetModuleName)
 }
@@ -212,8 +302,10 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
     return(retVal);
 }
 
+
+
 // TODO: testing
 int main() {
-	// this is a empty main
+	getFlatOutDerivatives("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt", -9.3, 3.2, -1, 0);
 }
 
