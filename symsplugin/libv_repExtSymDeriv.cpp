@@ -10,8 +10,23 @@ using namespace std;
 
 LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 
-// declaration
-void getFlatOutDerivatives(string s, float x, float y, float z, float yaw);
+// state vector
+struct State {
+	ex x, y, z, vx, vy, vz, psi, theta, phi, p, q, r;
+};
+// input vector: thrust + torques
+struct Inputs {
+	ex fz, tx, ty, tz;
+};
+
+
+// Plugin global variables
+unsigned nVars = 0;					// the number of symbolic vars (up to 4)
+symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the lariables
+matrix flatOut_D1;		// symbolic flat output derivatives vectors
+matrix flatOut_D2;
+matrix flatOut_D3;
+matrix flatOut_D4;
 
 // --------------------------------------------------------------------------------------
 // simExtSymDeriv_print
@@ -41,7 +56,7 @@ void LUA_PRINT_CALLBACK(SScriptCallBack* cb)
 		float yaw = inData->at(4).floatData[4];
 
 		// Get flat output derivatives
-		getFlatOutDerivatives(fileName, x, y, z, yaw);
+		//getFlatOutDerivatives(fileName, x, y, z, yaw);
     }
     D.pushOutData(CScriptFunctionDataItem(66));
     D.writeDataToStack(cb->stackID);
@@ -65,12 +80,61 @@ void genNextDerivative(const vector <symbol> vars, const matrix& src, matrix& de
 }
 
 
-void getFlatOutDerivatives(string fieldFilePath, float x, float y, float z, float yaw)
-{
+void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
+		const ex flatOut2[]) {
+
+	// Endogenous transformation: state in paper, eq.8
+	// state: x, y, z, vx , vy , vz , psi, theta, phi, p, q, r
+
+	state.x = flatOut[0];
+	state.y = flatOut[1];
+	state.z = flatOut[2];
+	state.vx = flatOut1[0];
+	state.vy = flatOut1[1];
+	state.vz = flatOut1[2];
+
+	ex ba = -cos(flatOut[3]) * flatOut2[0] - sin(flatOut[3]) * flatOut2[1];
+	ex bb = -flatOut2[2] + 9.8;
+	ex bc = -sin(flatOut[3]) * flatOut2[0] + cos(flatOut[3]) * flatOut2[1];
+
+	state.phi = atan2(bc, sqrt(ba*ba + bb*bb));
+	state.theta = atan2(ba, bb);
+	state.psi = flatOut[3];
+
+	// Euler rates rpy to angular velocity
+	matrix T = {
+		{ cos(state.phi) * cos(state.theta), -sin(state.phi), 0},
+		{ cos(state.theta) * sin(state.phi), cos(state.phi), 0},
+		{ -sin(state.theta), 0, 1}
+	};
+
+	ex d_phi = 1 / (1 + ba / bb);
+	ex d_theta = 1 / (1 + bc / sqrt(ba*ba + bb*bb));
+	ex d_psi = flatOut1[3];
+
+	matrix angVel = T.mul({{d_phi}, {d_theta}, {d_psi}});
+	state.p = angVel(0,0);
+	state.q = angVel(1,0);
+	state.r = angVel(2,0);
+
+	cout << "flatOut, flatOut1:" << endl;
+	cout << flatOut[0] << ", "<< flatOut[1] << ", "<< flatOut[2] << ", "<< flatOut[3]<< endl;
+	cout << flatOut1[0] << ", "<< flatOut1[1] << ", "<< flatOut1[2] << ", "<< flatOut1[3]<< endl;
+
+	cout << "state:" << endl;
+	cout << state.x << ", "<< state.y << ", "<< state.z << endl;
+	cout << state.vx << ", "<< state.vy << ", "<< state.vz << endl;
+	cout << state.phi << ", "<< state.theta << ", "<< state.psi << endl;
+	cout << state.p << ", "<< state.q << ", "<< state.r << endl;
+
+}
+
+
+void initField(string fieldFilePath) {
+
 	string line;
 	ifstream vectFile;
 	vector<string> vectFieldStr;
-	int nVars = 0;
 
 	// File open
 	try {
@@ -80,17 +144,7 @@ void getFlatOutDerivatives(string fieldFilePath, float x, float y, float z, floa
 		return;
 	}
 
-	// result objects
-	matrix flatOut_D1;
-	matrix flatOut_D2;
-	matrix flatOut_D3;
-	matrix flatOut_D4;
-
 	// Prepare the GiNaC parser
-	symbol Sx("x");
-	symbol Sy("y");
-	symbol Sz("z");
-	symbol Syaw("w");
 	symtab table;
 	vector <symbol> vars = {Sx, Sy, Sz, Syaw};
 	table["x"] = Sx;
@@ -100,6 +154,7 @@ void getFlatOutDerivatives(string fieldFilePath, float x, float y, float z, floa
 	parser reader(table);
 
 	// Get the first lines in the file as a vector
+	nVars = 0;
 	while (getline(vectFile, line)) {
 		vectFieldStr.push_back(line);
 		++nVars;
@@ -109,7 +164,7 @@ void getFlatOutDerivatives(string fieldFilePath, float x, float y, float z, floa
 
 	// Fill a symbolic matrix
 	matrix vectFieldSym(nVars, 1);
-	for (int i = 0; i < nVars; ++i) {
+	for (unsigned i = 0; i < nVars; ++i) {
 		ex e = reader(vectFieldStr[i]);
 		vectFieldSym.set(i, 0, e);
 	}
@@ -122,6 +177,57 @@ void getFlatOutDerivatives(string fieldFilePath, float x, float y, float z, floa
 	genNextDerivative(vars, flatOut_D2, flatOut_D3);
 	genNextDerivative(vars, flatOut_D3, flatOut_D4);
 	
+}
+
+// TODO: check vrep registered function
+
+// The registered vrep function for evaluating the inputs
+void updateState(float x, float y, float z, float yaw) {
+
+	// Evaluate the D4 vectors numerically
+	exmap symMap;
+	symMap[Sx] = x;
+	symMap[Sy] = y;
+	symMap[Sz] = z;
+	symMap[Syaw] = yaw;
+
+	// 	The flat output derivatives
+	ex flatOut[4];
+	ex flatOut1[4];
+	ex flatOut2[4];
+	ex flatOut3[4];
+	ex flatOut4[4];
+
+	// fill the globals flatOutputs derivatives
+	for (unsigned i = 0; i < nVars; ++i) {
+		flatOut1[i] = flatOut_D1(i,0).subs(symMap);
+		flatOut2[i] = flatOut_D2(i,0).subs(symMap);
+		flatOut3[i] = flatOut_D3(i,0).subs(symMap);
+		flatOut4[i] = flatOut_D4(i,0).subs(symMap);
+		//flatOut1[i] = ex_to<numeric>(flatOut_D1(i,0).subs(symMap)).to_double();
+		//flatOut2[i] = ex_to<numeric>(flatOut_D2(i,0).subs(symMap)).to_double();
+		//flatOut3[i] = ex_to<numeric>(flatOut_D3(i,0).subs(symMap)).to_double();
+		//flatOut4[i] = ex_to<numeric>(flatOut_D4(i,0).subs(symMap)).to_double();
+	}
+	for (unsigned i = nVars; i < 4; ++i) {
+		flatOut1[i] = 0;
+		flatOut2[i] = 0;
+		flatOut3[i] = 0;
+		flatOut4[i] = 0;
+	}
+	flatOut[0] = x;
+	flatOut[1] = y;
+	flatOut[2] = z;
+	flatOut[3] = yaw;
+
+	// Get the state of the quadrotor
+	State state;
+	cout << flatOut1[3];
+	flatOutputs2state(state, flatOut, flatOut1, flatOut2);
+	
+
+	// TODO: dividi il corpo in init (leggi file) e do it con sostituzioni
+
 }
 
 
@@ -306,6 +412,7 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 
 // TODO: testing
 int main() {
-	getFlatOutDerivatives("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt", -9.3, 3.2, -1, 0);
+	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
+	updateState(-1, -2, 0, 0);
 }
 
