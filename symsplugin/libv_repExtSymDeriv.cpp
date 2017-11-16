@@ -29,36 +29,65 @@ matrix flatOut_D3;
 matrix flatOut_D4;
 
 // --------------------------------------------------------------------------------------
-// simExtSymDeriv_print
+// simExtSymDeriv_init
 // --------------------------------------------------------------------------------------
-#define LUA_PRINT_COMMAND "simExtSymDeriv_print"
+#define LUA_INIT_COMMAND "simExtSymDeriv_init"
+ 
+// --------------------------------------------------------------------------------------
+// simExtSymDeriv_update
+// --------------------------------------------------------------------------------------
+#define LUA_UPDATE_COMMAND "simExtSymDeriv_update"
 
-const int inArgs_PRINT[]={
-    5,
-	sim_script_arg_string,1,
+const int inArgs_INIT[]={
+    1,
+	sim_script_arg_string,1
+};
+const int inArgs_UPDATE[]={
+    4,
     sim_script_arg_float,1,
     sim_script_arg_float,1,
     sim_script_arg_float,1,
     sim_script_arg_float,1
 };
- 
 
-void LUA_PRINT_CALLBACK(SScriptCallBack* cb)
+
+void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 { 
     CScriptFunctionData D;
-    if (D.readDataFromStack(cb->stackID,inArgs_PRINT,inArgs_PRINT[0],LUA_PRINT_COMMAND))
+	int ret = false;
+    if (D.readDataFromStack(cb->stackID,inArgs_INIT,inArgs_INIT[0],LUA_INIT_COMMAND))
     {
         std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
 		string fileName = inData->at(0).stringData[0];
-		float x = inData->at(1).floatData[1];
-		float y = inData->at(2).floatData[2];
-		float z = inData->at(3).floatData[3];
-		float yaw = inData->at(4).floatData[4];
 
-		// Get flat output derivatives
-		//getFlatOutDerivatives(fileName, x, y, z, yaw);
+		// call
+		ret = initField(fileName);
     }
-    D.pushOutData(CScriptFunctionDataItem(66));
+    D.pushOutData(CScriptFunctionDataItem(ret));
+    D.writeDataToStack(cb->stackID);
+}
+
+ 
+
+void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
+{ 
+    CScriptFunctionData D;
+    if (D.readDataFromStack(cb->stackID,inArgs_UPDATE,inArgs_UPDATE[0],LUA_UPDATE_COMMAND))
+    {
+        std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
+		float x = inData->at(0).floatData[0];
+		float y = inData->at(1).floatData[0];
+		float z = inData->at(2).floatData[0];
+		float yaw = inData->at(3).floatData[0];
+
+		// call
+		updateState(x, y, z, yaw);
+    }
+	// return quadrotor inputs // TODO: correct values
+    D.pushOutData(CScriptFunctionDataItem(3.3));
+    D.pushOutData(CScriptFunctionDataItem(3.4));
+    D.pushOutData(CScriptFunctionDataItem(3.5));
+    D.pushOutData(CScriptFunctionDataItem(3.6));
     D.writeDataToStack(cb->stackID);
 }
 // --------------------------------------------------------------------------------------
@@ -117,20 +146,21 @@ void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
 	state.q = angVel(1,0);
 	state.r = angVel(2,0);
 
-	cout << "flatOut, flatOut1:" << endl;
-	cout << flatOut[0] << ", "<< flatOut[1] << ", "<< flatOut[2] << ", "<< flatOut[3]<< endl;
-	cout << flatOut1[0] << ", "<< flatOut1[1] << ", "<< flatOut1[2] << ", "<< flatOut1[3]<< endl;
+	// debug
+	//cout << "flatOut, flatOut1:" << endl;
+	//cout << flatOut[0] << ", "<< flatOut[1] << ", "<< flatOut[2] << ", "<< flatOut[3]<< endl;
+	//cout << flatOut1[0] << ", "<< flatOut1[1] << ", "<< flatOut1[2] << ", "<< flatOut1[3]<< endl;
 
-	cout << "state:" << endl;
-	cout << state.x << ", "<< state.y << ", "<< state.z << endl;
-	cout << state.vx << ", "<< state.vy << ", "<< state.vz << endl;
-	cout << state.phi << ", "<< state.theta << ", "<< state.psi << endl;
-	cout << state.p << ", "<< state.q << ", "<< state.r << endl;
+	//cout << "state:" << endl;
+	//cout << state.x << ", "<< state.y << ", "<< state.z << endl;
+	//cout << state.vx << ", "<< state.vy << ", "<< state.vz << endl;
+	//cout << state.phi << ", "<< state.theta << ", "<< state.psi << endl;
+	//cout << state.p << ", "<< state.q << ", "<< state.r << endl;
 
 }
 
 
-void initField(string fieldFilePath) {
+int initField(string fieldFilePath) {
 
 	string line;
 	ifstream vectFile;
@@ -141,7 +171,7 @@ void initField(string fieldFilePath) {
 		vectFile.open(fieldFilePath, ifstream::in);
 	} catch (ifstream::failure e) {
 		cout << e.what();
-		return;
+		return false;
 	}
 
 	// Prepare the GiNaC parser
@@ -176,10 +206,10 @@ void initField(string fieldFilePath) {
 	genNextDerivative(vars, flatOut_D1, flatOut_D2);
 	genNextDerivative(vars, flatOut_D2, flatOut_D3);
 	genNextDerivative(vars, flatOut_D3, flatOut_D4);
-	
+
+	return true;
 }
 
-// TODO: check vrep registered function
 
 // The registered vrep function for evaluating the inputs
 void updateState(float x, float y, float z, float yaw) {
@@ -222,11 +252,7 @@ void updateState(float x, float y, float z, float yaw) {
 
 	// Get the state of the quadrotor
 	State state;
-	cout << flatOut1[3];
 	flatOutputs2state(state, flatOut, flatOut1, flatOut2);
-	
-
-	// TODO: dividi il corpo in init (leggi file) e do it con sostituzioni
 
 }
 
@@ -283,8 +309,13 @@ VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
         return(0); // Means error, V-REP will unload this plugin
     }
 
-    // Register the new Lua command "simExtSkeleton_getData":
-    simRegisterScriptCallbackFunction(strConCat(LUA_PRINT_COMMAND,"@","SymDeriv"),strConCat("string result=",LUA_PRINT_COMMAND,"(number x)"),LUA_PRINT_CALLBACK);
+    // Register the lua commands
+    simRegisterScriptCallbackFunction(strConCat(LUA_INIT_COMMAND,"@","SymDeriv"),
+			strConCat("number ok = ",LUA_INIT_COMMAND,"(string filePath)"),LUA_INIT_CALLBACK);
+
+    simRegisterScriptCallbackFunction(strConCat(LUA_UPDATE_COMMAND,"@","SymDeriv"),
+			strConCat("",LUA_UPDATE_COMMAND,"(number x, number y, number z, number yaw)"),LUA_UPDATE_CALLBACK);
+
 
     return(PLUGIN_VERSION); // initialization went fine, we return the version number of this plugin (can be queried with simGetModuleName)
 }
@@ -410,7 +441,6 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 
 
 
-// TODO: testing
 int main() {
 	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
 	updateState(-1, -2, 0, 0);
