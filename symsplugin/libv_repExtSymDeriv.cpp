@@ -110,7 +110,7 @@ void genNextDerivative(const vector <symbol> vars, const matrix& src, matrix& de
 
 
 void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
-		const ex flatOut2[]) {
+		const ex flatOut2[], const ex flatOut3[]) {
 
 	// Endogenous transformation: state in paper, eq.8
 	// state: x, y, z, vx , vy , vz , psi, theta, phi, p, q, r
@@ -137,8 +137,28 @@ void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
 		{ -sin(state.theta), 0, 1}
 	};
 
-	ex d_phi = 1 / (1 + ba / bb);
-	ex d_theta = 1 / (1 + bc / sqrt(ba*ba + bb*bb));
+	// computing derivatives for [p q r] computations:
+	
+	// d_ba = sin(s4(t))*diff(s4(t), t)*diff(s1(t), t, t) - sin(s4(t))*diff(s2(t), t, t, t) + 
+	// - cos(s4(t))*diff(s4(t), t)*diff(s2(t), t, t) - cos(s4(t))*diff(s1(t), t, t, t)
+	ex d_ba = sin(flatOut[3])*flatOut1[3]*flatOut2[0] - sin(flatOut[3])*flatOut3[1]
+	- cos(flatOut[3])*flatOut1[3]*flatOut2[1] - cos(flatOut[3])*flatOut3[0];
+
+	ex d_bb = -flatOut3[2];
+
+	// d_bc = cos(s4(t))*diff(s2(t), t, t, t) - sin(s4(t))*diff(s1(t), t, t, t) +
+	// - cos(s4(t))*diff(s4(t), t)*diff(s1(t), t, t) - sin(s4(t))*diff(s4(t), t)*diff(s2(t), t, t)
+	ex d_bc = cos(flatOut[3])*flatOut3[1] - sin(flatOut[3])*flatOut3[0]
+	- cos(flatOut[3])*flatOut1[3]*flatOut2[0] - sin(flatOut[3])*flatOut1[3]*flatOut2[1];
+
+	// d_theta = d_Atan(ba(t)/bb(t))
+	ex d_theta = 1 / (1 + (ba / bb)*(ba / bb)) * (d_ba * bb - ba * d_bb) / (bb * bb);
+
+	// d_phi = (diff(bc_(t), t)/(ba_(t)^2 + bb_(t)^2)^(1/2) - (bc_(t)*(ba_(t)*diff(ba_(t), t)
+	// + bb_(t)*diff(bb_(t), t)))/(ba_(t)^2 + bb_(t)^2)^(3/2))/(bc_(t)^2/(ba_(t)^2 + bb_(t)^2) + 1)
+	ex d_phi = (d_bc/pow(ba*ba + bb*bb, 1/2) - (bc*(ba*d_ba
+		+ bb*d_bb))/pow(ba*ba + bb*bb, 3/2))/(bc*bc/(ba*ba + bb*bb) + 1);
+ 
 	ex d_psi = flatOut1[3];
 
 	matrix angVel = T.mul({{d_phi}, {d_theta}, {d_psi}});
@@ -156,6 +176,14 @@ void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
 	//cout << state.vx << ", "<< state.vy << ", "<< state.vz << endl;
 	//cout << state.phi << ", "<< state.theta << ", "<< state.psi << endl;
 	//cout << state.p << ", "<< state.q << ", "<< state.r << endl;
+
+}
+
+
+void flatOutputs2inputs(Inputs &inputs, const ex flatOut[], const ex flatOut1[],
+		const ex flatOut2[]) {
+
+
 
 }
 
@@ -199,6 +227,14 @@ int initField(string fieldFilePath) {
 		vectFieldSym.set(i, 0, e);
 	}
 
+	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
+	if (nVars >= 2) {
+		vectFieldSym.set(1, 0, -vectFieldSym(1, 0));
+	}
+	if (nVars >= 3) {
+		vectFieldSym.set(2, 0, -vectFieldSym(2, 0));
+	}
+
 	// Save the first flat output derivative d(sigma)/dt=V(x)
 	flatOut_D1 = vectFieldSym;
 
@@ -213,6 +249,10 @@ int initField(string fieldFilePath) {
 
 // The registered vrep function for evaluating the inputs
 void updateState(float x, float y, float z, float yaw) {
+	
+	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
+	y = -y;
+	z = -z;
 
 	// Evaluate the D4 vectors numerically
 	exmap symMap;
@@ -252,7 +292,7 @@ void updateState(float x, float y, float z, float yaw) {
 
 	// Get the state of the quadrotor
 	State state;
-	flatOutputs2state(state, flatOut, flatOut1, flatOut2);
+	flatOutputs2state(state, flatOut, flatOut1, flatOut2, flatOut3);
 
 }
 
@@ -443,6 +483,6 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 
 int main() {
 	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
-	updateState(-1, -2, 0, 0);
+	updateState(-1, -2, -3, -4);
 }
 
