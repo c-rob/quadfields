@@ -1,9 +1,14 @@
 ## Project specific
 
-# Include the source files of the plugin
-/symsplugin/*.txt
+# Exclude object files
 *.o
 *.so
+
+# The vector field
+/symsplugin/*.txt
+
+# The executable version for testing
+/symsplugin/v_repExtSymDeriv
 
 ## Vim related
 # swap

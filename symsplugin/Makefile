@@ -10,7 +10,7 @@ LDFLAGS=-lstdc++ -ldl -lcln -lginac
 # all built files in the current dir
 SOURCES=libv_repExtSymDeriv.cpp $(shell echo ./vrep/common/stack/*.cpp) $(shell echo ./vrep/common/*.cpp)
 INCLUDES=libv_repExtSymDeriv.hpp
-DESTEXE=repExtSymDeriv
+DESTEXE=v_repExtSymDeriv
 DESTLIB=libv_repExtSymDeriv.so
 OBJECTS=$(SOURCES:.cpp=.o)
 INCLUDESDIR=-I./vrep/include/ -I./vrep/include/stack/

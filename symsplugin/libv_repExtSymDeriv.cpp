@@ -10,6 +10,24 @@ using namespace std;
 
 LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 
+
+// Plugin global variables
+unsigned nVars = 0;					// the number of symbolic vars (up to 4)
+symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the variables
+symbol St("t"); 		// Time is implicit in all variables
+matrix flatOut_D1;		// symbolic flat output derivatives vectors
+matrix flatOut_D2;
+matrix flatOut_D3;
+matrix flatOut_D4;
+
+// 	The flat output derivatives 
+ex flatOut[4];			// numeric values in the current iteration
+ex flatOut1[4];
+ex flatOut2[4];
+ex flatOut3[4];
+ex flatOut4[4];
+
+
 // state vector
 struct State {
 	ex x, y, z, vx, vy, vz, psi, theta, phi, p, q, r;
@@ -19,14 +37,70 @@ struct Inputs {
 	ex fz, tx, ty, tz;
 };
 
+// Symbolic equations
+struct {
+	ex phi;
+	ex theta;
+	ex psi;
+	ex d_phi;
+	ex d_theta;
+	ex d_psi;
+} equations;
 
-// Plugin global variables
-unsigned nVars = 0;					// the number of symbolic vars (up to 4)
-symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the lariables
-matrix flatOut_D1;		// symbolic flat output derivatives vectors
-matrix flatOut_D2;
-matrix flatOut_D3;
-matrix flatOut_D4;
+
+
+/*
+ Declare symbolic functions for Ginac authomatic differentiation
+*/
+static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_param);
+static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t);
+
+// Symbolic function for generic variables
+DECLARE_FUNCTION_3P(symF)
+REGISTER_FUNCTION(symF, evalf_func(evalf_symF). derivative_func(diff_symF))
+
+
+static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_param) {
+	if (diff_param == 2) {
+		return symF(var, nDiff+1, t);
+	} else if (diff_param == 0) {
+		return 1;
+	} else {
+		throw "symF Bad differentiation\n";
+	}
+}
+
+
+static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
+	// Warning: flat outputs must be evaluated first
+
+	unsigned index = 0;
+	if (var.is_equal(Sx)) index = 0;
+	else if (var.is_equal(Sy)) index = 1;
+	else if (var.is_equal(Sz)) index = 2;
+	else if (var.is_equal(Syaw)) index = 3;
+	else throw "Error: wrong index in symF\n";
+
+	ex ret;
+	numeric nDiffN = ex_to<numeric>(nDiff);
+	if (nDiffN == 0) {
+		ret = flatOut[index];
+	} else if (nDiffN == 1) {
+		ret = flatOut1[index];
+	} else if (nDiffN == 2) {
+		ret = flatOut2[index];
+	} else if (nDiffN == 3) {
+		ret = flatOut3[index];
+	} else if (nDiffN == 4) {
+		ret = flatOut4[index];
+	} else {
+		throw "Error: wrong symbol as argument of symF\n";
+	}
+
+	return ret;
+}
+
+
 
 // --------------------------------------------------------------------------------------
 // simExtSymDeriv_init
@@ -183,7 +257,27 @@ void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
 void flatOutputs2inputs(Inputs &inputs, const ex flatOut[], const ex flatOut1[],
 		const ex flatOut2[]) {
 
+	// computing algular acceleration via:
+	// 	d(omega)/dt = d(T(phi,theta) * [d(phi); d(theta); d(psi)])/dt
 
+
+
+}
+
+
+void genSymbolicEquations(void) {
+
+	ex ba = -cos(symF(Syaw,0,St)) * symF(Sx,2,St) - sin(symF(Syaw,0,St)) * symF(Sy,2,St);
+	ex bb = -symF(Sz,2,St) + 9.8;
+	ex bc = -sin(symF(Syaw,0,St)) * symF(Sx,2,St) + cos(symF(Syaw,0,St)) * symF(Sy,2,St);
+
+	equations.phi = atan2(bc, sqrt(ba*ba + bb*bb));
+	equations.theta = atan2(ba, bb);
+	equations.psi = symF(Syaw,0,St);
+
+	equations.d_phi = equations.phi.diff(St);
+	equations.d_theta = equations.theta.diff(St);
+	equations.d_psi = equations.psi.diff(St);
 
 }
 
@@ -243,6 +337,9 @@ int initField(string fieldFilePath) {
 	genNextDerivative(vars, flatOut_D2, flatOut_D3);
 	genNextDerivative(vars, flatOut_D3, flatOut_D4);
 
+	// Save equations to globals
+	genSymbolicEquations();
+
 	return true;
 }
 
@@ -261,13 +358,6 @@ void updateState(float x, float y, float z, float yaw) {
 	symMap[Sz] = z;
 	symMap[Syaw] = yaw;
 
-	// 	The flat output derivatives
-	ex flatOut[4];
-	ex flatOut1[4];
-	ex flatOut2[4];
-	ex flatOut3[4];
-	ex flatOut4[4];
-
 	// fill the globals flatOutputs derivatives
 	for (unsigned i = 0; i < nVars; ++i) {
 		flatOut1[i] = flatOut_D1(i,0).subs(symMap);
@@ -285,6 +375,7 @@ void updateState(float x, float y, float z, float yaw) {
 		flatOut3[i] = 0;
 		flatOut4[i] = 0;
 	}
+	// save to global
 	flatOut[0] = x;
 	flatOut[1] = y;
 	flatOut[2] = z;
@@ -483,6 +574,9 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 
 int main() {
 	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
-	updateState(-1, -2, -3, -4);
+
+	updateState(1,-2,3,0);
+	cout << equations.d_phi.evalf() << endl;
+
 }
 
