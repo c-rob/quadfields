@@ -13,12 +13,6 @@ LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 
 // Plugin global variables
 unsigned nVars = 0;					// the number of symbolic vars (up to 4)
-symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the variables
-symbol St("t"); 		// Time is implicit in all variables
-matrix flatOut_D1;		// symbolic flat output derivatives vectors
-matrix flatOut_D2;
-matrix flatOut_D3;
-matrix flatOut_D4;
 
 // 	The flat output derivatives 
 ex flatOut[4];			// numeric values in the current iteration
@@ -45,8 +39,19 @@ struct {
 	ex d_phi;
 	ex d_theta;
 	ex d_psi;
+	matrix T;
+	matrix omega;
+	matrix d_omega;
+	matrix u_torque;
+	ex u_thrust;
 } equations;
 
+symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the variables
+symbol St("t"); 		// Time is implicit in all variables
+matrix flatOut_D1;		// symbolic flat output derivatives vectors
+matrix flatOut_D2;
+matrix flatOut_D3;
+matrix flatOut_D4;
 
 
 /*
@@ -267,6 +272,7 @@ void flatOutputs2inputs(Inputs &inputs, const ex flatOut[], const ex flatOut1[],
 
 void genSymbolicEquations(void) {
 
+	// Euler angles and first derivative
 	ex ba = -cos(symF(Syaw,0,St)) * symF(Sx,2,St) - sin(symF(Syaw,0,St)) * symF(Sy,2,St);
 	ex bb = -symF(Sz,2,St) + 9.8;
 	ex bc = -sin(symF(Syaw,0,St)) * symF(Sx,2,St) + cos(symF(Syaw,0,St)) * symF(Sy,2,St);
@@ -279,6 +285,38 @@ void genSymbolicEquations(void) {
 	equations.d_theta = equations.theta.diff(St);
 	equations.d_psi = equations.psi.diff(St);
 
+	// Euler rates rpy to angular velocity
+	equations.T = {
+		{ cos(equations.phi) * cos(equations.theta), -sin(equations.phi), 0},
+		{ cos(equations.theta) * sin(equations.phi), cos(equations.phi), 0},
+		{ -sin(equations.theta), 0, 1}
+	};
+	ex temp_omega = equations.T * matrix({{equations.d_phi},
+			{equations.d_theta}, {equations.d_psi}});
+	ex temp_d_omega = temp_omega.diff(St);
+
+	equations.omega = ex_to<matrix>(temp_omega.evalm());
+	equations.d_omega = ex_to<matrix>(temp_d_omega.evalm());
+
+
+	// TODO: get the correct mass and inertia from v-rep and move this definition
+	matrix J_inertia = matrix(3,3);
+	ex mass = 2;
+	
+	// omega = [0, −r, q; r, 0, −p; −q, p, 0]
+	matrix skewOmega = {{0, -equations.omega(2,0), equations.omega(1,0)},
+						{equations.omega(2,0), 0, -equations.omega(0,0)},
+						{-equations.omega(1,0), equations.omega(0,0), 0}};
+
+	//equations.u_torque = J_inertia * equations.d_omega + skew(equations.omega)
+	//	* J_inertia * equations.omega;
+	ex temp_u_torque = J_inertia * equations.d_omega + skewOmega * J_inertia * equations.omega;
+	equations.u_torque = ex_to<matrix>(temp_u_torque.evalm());
+	
+	// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - 9.8 * [0;0;1])
+	ex flatOut_D2_sube = (sub_matrix(flatOut_D2, 0, 3, 0, 1) - matrix({{0},{0},{9.8}}));
+	matrix flatOut_D2_subm = ex_to<matrix>(flatOut_D2_sube.evalm());
+	equations.u_thrust = mass * sqrt((flatOut_D2_subm.transpose() * flatOut_D2_subm).evalm());
 }
 
 
@@ -575,8 +613,9 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 int main() {
 	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
 
-	updateState(1,-2,3,0);
-	cout << equations.d_phi.evalf() << endl;
+	//
+	//updateState(1,-2,3,0);
+	//cout << equations.d_phi.evalf() << endl;
 
 }
 
