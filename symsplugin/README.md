@@ -16,3 +16,6 @@ Dingjiang Zhou and Mac Schwager
 	* cd to the symsplugin directory
 	* Run "make mklib" to build the library or "make install" to build
 		and copy to the v-rep installation directory
+
+### Notes:
+	* If the quadrotor dynamic properties changes, vrep must be restarted

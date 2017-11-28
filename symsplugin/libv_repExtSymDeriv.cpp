@@ -14,6 +14,11 @@ LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 // Plugin global variables
 unsigned nVars = 0;					// the number of symbolic vars (up to 4)
 
+// dynamic properties
+float mass = 0;
+matrix J_inertia = {{1,0,0},{0,1,0},{0,0,1}};
+
+
 // 	The flat output derivatives 
 ex flatOut[4];			// numeric values in the current iteration
 ex flatOut1[4];
@@ -118,8 +123,10 @@ static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
 #define LUA_UPDATE_COMMAND "simExtSymDeriv_update"
 
 const int inArgs_INIT[]={
-    1,
-	sim_script_arg_string,1
+    3,
+	sim_script_arg_string,1,
+	sim_script_arg_float,1,
+	sim_script_arg_table | sim_script_arg_float,9
 };
 const int inArgs_UPDATE[]={
     4,
@@ -136,8 +143,20 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 	int ret = false;
     if (D.readDataFromStack(cb->stackID,inArgs_INIT,inArgs_INIT[0],LUA_INIT_COMMAND))
     {
+		// fileName
         std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
 		string fileName = inData->at(0).stringData[0];
+
+		// mass
+		mass = inData->at(1).floatData[0];
+
+		// inertia matrix
+		for (unsigned r = 0; r < 3; ++r) {
+			for (unsigned c = 0; c < 3; ++c) {
+				J_inertia(r,c) = inData->at(2).floatData[r*3+c];
+			}
+		}
+
 
 		// call
 		ret = initField(fileName);
@@ -299,10 +318,6 @@ void genSymbolicEquations(void) {
 	equations.d_omega = ex_to<matrix>(temp_d_omega.evalm());
 
 
-	// TODO: get the correct mass and inertia from v-rep and move this definition
-	matrix J_inertia = matrix(3,3);
-	ex mass = 2;
-	
 	// omega = [0, −r, q; r, 0, −p; −q, p, 0]
 	matrix skewOmega = {{0, -equations.omega(2,0), equations.omega(1,0)},
 						{equations.omega(2,0), 0, -equations.omega(0,0)},
@@ -480,7 +495,7 @@ VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
 
     // Register the lua commands
     simRegisterScriptCallbackFunction(strConCat(LUA_INIT_COMMAND,"@","SymDeriv"),
-			strConCat("number ok = ",LUA_INIT_COMMAND,"(string filePath)"),LUA_INIT_CALLBACK);
+			strConCat("number ok = ",LUA_INIT_COMMAND,"(string filePath, number mass, table9 inertia_matrix)"),LUA_INIT_CALLBACK);
 
     simRegisterScriptCallbackFunction(strConCat(LUA_UPDATE_COMMAND,"@","SymDeriv"),
 			strConCat("",LUA_UPDATE_COMMAND,"(number x, number y, number z, number yaw)"),LUA_UPDATE_CALLBACK);
@@ -611,11 +626,11 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 
 
 int main() {
+
+	mass = 2;
+
 	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
 
-	//
-	//updateState(1,-2,3,0);
-	//cout << equations.d_phi.evalf() << endl;
 
 }
 
