@@ -4,6 +4,7 @@
 
 #define CONCAT(x,y,z) x y z
 #define strConCat(x,y,z)    CONCAT(x,y,z)
+#define EX_TO_DOUBLE(x)	GiNaC::ex_to<numeric>(x).to_double();
 
 using namespace GiNaC;
 using namespace std;
@@ -29,11 +30,11 @@ ex flatOut4[4];
 
 // state vector
 struct State {
-	ex x, y, z, vx, vy, vz, psi, theta, phi, p, q, r;
+	double x, y, z, vx, vy, vz, psi, theta, phi, p, q, r;
 };
 // input vector: thrust + torques
 struct Inputs {
-	ex fz, tx, ty, tz;
+	double fz, tx, ty, tz;
 };
 
 // Symbolic equations
@@ -59,6 +60,10 @@ matrix flatOut_D3;
 matrix flatOut_D4;
 
 
+// forward declaration
+void updateState(Inputs &inputs, double x, double y, double z, double yaw);
+
+
 /*
  Declare symbolic functions for Ginac authomatic differentiation
 */
@@ -76,7 +81,8 @@ static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_p
 	} else if (diff_param == 0) {
 		return 1;
 	} else {
-		throw "symF Bad differentiation\n";
+		cerr << "symF Bad differentiation\n" << endl;
+		return 0;
 	}
 }
 
@@ -89,7 +95,10 @@ static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
 	else if (var.is_equal(Sy)) index = 1;
 	else if (var.is_equal(Sz)) index = 2;
 	else if (var.is_equal(Syaw)) index = 3;
-	else throw "Error: wrong index in symF\n";
+	else {
+		cerr << "Error: wrong index in symF\n" << endl;
+		return 0;
+	}
 
 	ex ret;
 	numeric nDiffN = ex_to<numeric>(nDiff);
@@ -104,7 +113,8 @@ static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
 	} else if (nDiffN == 4) {
 		ret = flatOut4[index];
 	} else {
-		throw "Error: wrong symbol as argument of symF\n";
+		cerr << "Error: wrong symbol as argument of symF\n" << endl;
+		return 0;
 	}
 
 	return ret;
@@ -125,15 +135,15 @@ static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
 const int inArgs_INIT[]={
     3,
 	sim_script_arg_string,1,
-	sim_script_arg_float,1,
-	sim_script_arg_table | sim_script_arg_float,9
+	sim_script_arg_double,1,
+	sim_script_arg_table | sim_script_arg_double,9
 };
 const int inArgs_UPDATE[]={
     4,
-    sim_script_arg_float,1,
-    sim_script_arg_float,1,
-    sim_script_arg_float,1,
-    sim_script_arg_float,1
+    sim_script_arg_double,1,
+    sim_script_arg_double,1,
+    sim_script_arg_double,1,
+    sim_script_arg_double,1
 };
 
 
@@ -148,12 +158,12 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 		string fileName = inData->at(0).stringData[0];
 
 		// mass
-		mass = inData->at(1).floatData[0];
+		mass = inData->at(1).doubleData[0];
 
 		// inertia matrix
 		for (unsigned r = 0; r < 3; ++r) {
 			for (unsigned c = 0; c < 3; ++c) {
-				J_inertia(r,c) = inData->at(2).floatData[r*3+c];
+				J_inertia(r,c) = inData->at(2).doubleData[r*3+c];
 			}
 		}
 
@@ -170,22 +180,24 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 { 
     CScriptFunctionData D;
+	Inputs inputs;
     if (D.readDataFromStack(cb->stackID,inArgs_UPDATE,inArgs_UPDATE[0],LUA_UPDATE_COMMAND))
     {
         std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
-		float x = inData->at(0).floatData[0];
-		float y = inData->at(1).floatData[0];
-		float z = inData->at(2).floatData[0];
-		float yaw = inData->at(3).floatData[0];
+		double x = inData->at(0).doubleData[0];
+		double y = inData->at(1).doubleData[0];
+		double z = inData->at(2).doubleData[0];
+		double yaw = inData->at(3).doubleData[0];
 
 		// call
-		updateState(x, y, z, yaw);
+		updateState(inputs, x, y, z, yaw);
+
     }
-	// return quadrotor inputs // TODO: correct values
-    D.pushOutData(CScriptFunctionDataItem(3.3));
-    D.pushOutData(CScriptFunctionDataItem(3.4));
-    D.pushOutData(CScriptFunctionDataItem(3.5));
-    D.pushOutData(CScriptFunctionDataItem(3.6));
+	// return quadrotor inputs
+    D.pushOutData(CScriptFunctionDataItem(inputs.tx));
+    D.pushOutData(CScriptFunctionDataItem(inputs.ty));
+    D.pushOutData(CScriptFunctionDataItem(inputs.tz));
+    D.pushOutData(CScriptFunctionDataItem(inputs.fz));
     D.writeDataToStack(cb->stackID);
 }
 // --------------------------------------------------------------------------------------
@@ -213,20 +225,20 @@ void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
 	// Endogenous transformation: state in paper, eq.8
 	// state: x, y, z, vx , vy , vz , psi, theta, phi, p, q, r
 
-	state.x = flatOut[0];
-	state.y = flatOut[1];
-	state.z = flatOut[2];
-	state.vx = flatOut1[0];
-	state.vy = flatOut1[1];
-	state.vz = flatOut1[2];
+	state.x = EX_TO_DOUBLE(flatOut[0]);
+	state.y = EX_TO_DOUBLE(flatOut[1]);
+	state.z = EX_TO_DOUBLE(flatOut[2]);
+	state.vx = EX_TO_DOUBLE(flatOut1[0]);
+	state.vy = EX_TO_DOUBLE(flatOut1[1]);
+	state.vz = EX_TO_DOUBLE(flatOut1[2]);
 
 	ex ba = -cos(flatOut[3]) * flatOut2[0] - sin(flatOut[3]) * flatOut2[1];
 	ex bb = -flatOut2[2] + 9.8;
 	ex bc = -sin(flatOut[3]) * flatOut2[0] + cos(flatOut[3]) * flatOut2[1];
 
-	state.phi = atan2(bc, sqrt(ba*ba + bb*bb));
-	state.theta = atan2(ba, bb);
-	state.psi = flatOut[3];
+	state.phi = EX_TO_DOUBLE(atan2(bc, sqrt(ba*ba + bb*bb)));
+	state.theta = EX_TO_DOUBLE(atan2(ba, bb));
+	state.psi = EX_TO_DOUBLE(flatOut[3]);
 
 	// Euler rates rpy to angular velocity
 	matrix T = {
@@ -260,9 +272,9 @@ void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
 	ex d_psi = flatOut1[3];
 
 	matrix angVel = T.mul({{d_phi}, {d_theta}, {d_psi}});
-	state.p = angVel(0,0);
-	state.q = angVel(1,0);
-	state.r = angVel(2,0);
+	state.p = EX_TO_DOUBLE(angVel(0,0));
+	state.q = EX_TO_DOUBLE(angVel(1,0));
+	state.r = EX_TO_DOUBLE(angVel(2,0));
 
 	// debug
 	//cout << "flatOut, flatOut1:" << endl;
@@ -278,13 +290,20 @@ void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
 }
 
 
-void flatOutputs2inputs(Inputs &inputs, const ex flatOut[], const ex flatOut1[],
-		const ex flatOut2[]) {
+void flatOutputs2inputs(Inputs &inputs) {
 
-	// computing algular acceleration via:
-	// 	d(omega)/dt = d(T(phi,theta) * [d(phi); d(theta); d(psi)])/dt
-
-
+	// substitute symbolic equations
+	exmap symMap;
+	symMap[Sx] = flatOut[0];
+	symMap[Sy] = flatOut[1];
+	symMap[Sz] = flatOut[2];
+	symMap[Syaw] = flatOut[3];
+	ex u_torque_f = equations.u_torque.evalf();
+	
+	inputs.tx = EX_TO_DOUBLE(ex_to<matrix>(u_torque_f)(0,0));
+	inputs.ty = EX_TO_DOUBLE(ex_to<matrix>(u_torque_f)(1,0));
+	inputs.tz = EX_TO_DOUBLE(ex_to<matrix>(u_torque_f)(2,0));
+	inputs.fz = EX_TO_DOUBLE(equations.u_thrust.evalf());
 
 }
 
@@ -329,9 +348,12 @@ void genSymbolicEquations(void) {
 	equations.u_torque = ex_to<matrix>(temp_u_torque.evalm());
 	
 	// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - 9.8 * [0;0;1])
-	ex flatOut_D2_sube = (sub_matrix(flatOut_D2, 0, 3, 0, 1) - matrix({{0},{0},{9.8}}));
+	matrix xyz_D2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
+	ex flatOut_D2_sube = (xyz_D2 - matrix({{0},{0},{9.8}}));
 	matrix flatOut_D2_subm = ex_to<matrix>(flatOut_D2_sube.evalm());
-	equations.u_thrust = mass * sqrt((flatOut_D2_subm.transpose() * flatOut_D2_subm).evalm());
+	ex innerProd = flatOut_D2_subm.transpose() * flatOut_D2_subm;
+	matrix innerProdM = ex_to<matrix>(innerProd.evalm());
+	equations.u_thrust = mass * sqrt(innerProdM(0,0));
 }
 
 
@@ -398,7 +420,7 @@ int initField(string fieldFilePath) {
 
 
 // The registered vrep function for evaluating the inputs
-void updateState(float x, float y, float z, float yaw) {
+void updateState(Inputs &inputs, double x, double y, double z, double yaw) {
 	
 	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
 	y = -y;
@@ -437,7 +459,7 @@ void updateState(float x, float y, float z, float yaw) {
 	// Get the state of the quadrotor
 	State state;
 	flatOutputs2state(state, flatOut, flatOut1, flatOut2, flatOut3);
-
+	flatOutputs2inputs(inputs);
 }
 
 
@@ -628,8 +650,12 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 int main() {
 
 	mass = 2;
+	J_inertia.set(3,3,unit_matrix(3,3));
 
 	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
+
+	Inputs inputs;
+	updateState(inputs, 1,-1,2,1);
 
 
 }
