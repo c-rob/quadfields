@@ -38,10 +38,16 @@
 
 #define PLUGIN_VERSION 4 // 2 since version 3.2.1, 3 since V3.3.1, 4 since V3.4.0
 
+// input vector: thrust + torques
+struct Inputs {
+	double fz, tx, ty, tz;
+};
+
 
 // custom commands
 int initField(std::string fieldFilePath);	// read vector field file equations
-void updateState(float x, float y, float z, float yaw); // Eval symbolic equations
+void updateState(Inputs &inputs, double x, double y, double z, double yaw);
+								// Eval symbolic equations
 
 
 // The 3 required entry points of the V-REP plugin:

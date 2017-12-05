@@ -32,10 +32,6 @@ ex flatOut4[4];
 struct State {
 	double x, y, z, vx, vy, vz, psi, theta, phi, p, q, r;
 };
-// input vector: thrust + torques
-struct Inputs {
-	double fz, tx, ty, tz;
-};
 
 // Symbolic equations
 struct {
@@ -194,10 +190,10 @@ void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 
     }
 	// return quadrotor inputs
+    D.pushOutData(CScriptFunctionDataItem(inputs.fz));
     D.pushOutData(CScriptFunctionDataItem(inputs.tx));
     D.pushOutData(CScriptFunctionDataItem(inputs.ty));
     D.pushOutData(CScriptFunctionDataItem(inputs.tz));
-    D.pushOutData(CScriptFunctionDataItem(inputs.fz));
     D.writeDataToStack(cb->stackID);
 }
 // --------------------------------------------------------------------------------------
