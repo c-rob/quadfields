@@ -10,6 +10,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <cln/cln.h>
 #include <ginac/ginac.h>
 #include "v_repLib.h"
 #include "luaFunctionData.h"

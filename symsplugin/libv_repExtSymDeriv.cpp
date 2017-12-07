@@ -28,9 +28,9 @@ ex flatOut3[4];
 ex flatOut4[4];
 
 
-// state vector
+// State vector; saved in vrep conventions (angles and frames)
 struct State {
-	double x, y, z, vx, vy, vz, psi, theta, phi, p, q, r;
+	double x, y, z, vx, vy, vz, a, b, g, p, q, r;
 };
 
 // Symbolic equations
@@ -64,11 +64,14 @@ void updateState(Inputs &inputs, double x, double y, double z, double yaw);
  Declare symbolic functions for Ginac authomatic differentiation
 */
 static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_param);
+static ex eval_symF(const ex &var, const ex &nDiff, const ex &t);
 static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t);
 
 // Symbolic function for generic variables
 DECLARE_FUNCTION_3P(symF)
-REGISTER_FUNCTION(symF, evalf_func(evalf_symF). derivative_func(diff_symF))
+REGISTER_FUNCTION(symF, evalf_func(evalf_symF).
+		derivative_func(diff_symF).
+		eval_func(eval_symF))
 
 
 static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_param) {
@@ -79,6 +82,19 @@ static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_p
 	} else {
 		cerr << "symF Bad differentiation\n" << endl;
 		return 0;
+	}
+}
+
+
+static ex eval_symF(const ex &var, const ex &nDiff, const ex &t) {
+
+	// Simplify symbolic equations if the vector field do not specifies z or yaw
+	if (var.is_equal(Sz) && nVars < 3 && nDiff > 0) {
+		return 0;
+	} else if (var.is_equal(Syaw) && nVars < 4 && nDiff > 0) {
+		return 0;
+	} else {
+		return symF(var, nDiff, t).hold();
 	}
 }
 
@@ -156,7 +172,7 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 		// mass
 		mass = inData->at(1).doubleData[0];
 
-		// inertia matrix
+		// inertia matrix: TODO: move inside initField and rotate
 		for (unsigned r = 0; r < 3; ++r) {
 			for (unsigned c = 0; c < 3; ++c) {
 				J_inertia(r,c) = inData->at(2).doubleData[r*3+c];
@@ -199,6 +215,56 @@ void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 // --------------------------------------------------------------------------------------
 
 
+matrix vectorVrepTransform(const matrix& vec) {
+
+	return matrix({{vec(0,0)}, {-vec(1,0)}, {-vec(2,0)}});
+}
+
+
+matrix rpy2matrix(const ex r, const ex p, const ex y) {
+	// [r,p,y] = [phi,theta,psi]
+
+	matrix Rz = {{cos(y), -sin(y), 0}, {sin(y), cos(y), 0}, {0, 0, 1}};
+	matrix Ry = {{cos(p), 0, sin(p)}, {0, 1, 0}, {-sin(p), 0, cos(p)}};
+	matrix Rx = {{1, 0, 0}, {0, cos(r), -sin(r)}, {0, sin(r), cos(r)}};
+
+	return Rz.mul(Ry.mul(Rx));
+}
+
+
+matrix abg2matrix(const ex a, const ex b, const ex g) {
+	// [a,b,g] = [alpha,beta,gamma]
+
+	matrix Rz = {{cos(g), -sin(g), 0}, {sin(g), cos(g), 0}, {0, 0, 1}};
+	matrix Ry = {{cos(b), 0, sin(b)}, {0, 1, 0}, {-sin(b), 0, cos(b)}};
+	matrix Rx = {{1, 0, 0}, {0, cos(a), -sin(a)}, {0, sin(a), cos(a)}};
+
+	return Rx.mul(Ry.mul(Rz));
+}
+
+
+matrix matrix2rpy(matrix m) {
+	// [r,p,y] = [phi,theta,psi]
+
+	ex phi = atan2(m(2,1), m(2,2));
+	ex theta = atan2(-m(2,0), sqrt(m(2,2)*m(2,2) + m(2,1)*m(2,1)));
+	ex psi = atan2(m(1,0), m(0,0));
+
+	return matrix({{phi}, {theta}, {psi}});
+}
+
+
+matrix matrix2abg(matrix m) {
+	// [a,b,g] = [alpha,beta,gamma]
+
+	ex a = atan2(-m(1,2), m(2,2));
+	ex b = atan2(m(0,2), sqrt(m(1,2)*m(1,2) + m(2,2)*m(2,2)));
+	ex g = atan2(-m(0,1), m(0,0));
+
+	return matrix({{a}, {b}, {g}});
+}
+
+
 // given the vector of the variables, the symbolic vector src in inputs
 // computes the next derivative through dv = J_v * v
 void genNextDerivative(const vector <symbol> vars, const matrix& src, matrix& dest) {
@@ -215,85 +281,60 @@ void genNextDerivative(const vector <symbol> vars, const matrix& src, matrix& de
 }
 
 
-void flatOutputs2state(State &state, const ex flatOut[], const ex flatOut1[],
-		const ex flatOut2[], const ex flatOut3[]) {
+void flatOutputs2state(State &state) {
 
 	// Endogenous transformation: state in paper, eq.8
 	// state: x, y, z, vx , vy , vz , psi, theta, phi, p, q, r
 
-	state.x = EX_TO_DOUBLE(flatOut[0]);
-	state.y = EX_TO_DOUBLE(flatOut[1]);
-	state.z = EX_TO_DOUBLE(flatOut[2]);
-	state.vx = EX_TO_DOUBLE(flatOut1[0]);
-	state.vy = EX_TO_DOUBLE(flatOut1[1]);
-	state.vz = EX_TO_DOUBLE(flatOut1[2]);
+	ex x = flatOut[0];
+	ex y = flatOut[1];
+	ex z = flatOut[2];
 
-	ex ba = -cos(flatOut[3]) * flatOut2[0] - sin(flatOut[3]) * flatOut2[1];
-	ex bb = -flatOut2[2] + 9.8;
-	ex bc = -sin(flatOut[3]) * flatOut2[0] + cos(flatOut[3]) * flatOut2[1];
+	ex vx = flatOut1[0];
+	ex vy = flatOut1[1];
+	ex vz = flatOut1[2];
 
-	state.phi = EX_TO_DOUBLE(atan2(bc, sqrt(ba*ba + bb*bb)));
-	state.theta = EX_TO_DOUBLE(atan2(ba, bb));
-	state.psi = EX_TO_DOUBLE(flatOut[3]);
+	ex phi = equations.phi.evalf();
+	ex theta = equations.theta.evalf();
+	ex psi = flatOut[3];
 
-	// Euler rates rpy to angular velocity
-	matrix T = {
-		{ cos(state.phi) * cos(state.theta), -sin(state.phi), 0},
-		{ cos(state.theta) * sin(state.phi), cos(state.phi), 0},
-		{ -sin(state.theta), 0, 1}
-	};
-
-	// computing derivatives for [p q r] computations:
+	ex p = equations.omega(0,0).evalf();
+	ex q = equations.omega(1,0).evalf();
+	ex r = equations.omega(2,0).evalf();
+	 
 	
-	// d_ba = sin(s4(t))*diff(s4(t), t)*diff(s1(t), t, t) - sin(s4(t))*diff(s2(t), t, t, t) + 
-	// - cos(s4(t))*diff(s4(t), t)*diff(s2(t), t, t) - cos(s4(t))*diff(s1(t), t, t, t)
-	ex d_ba = sin(flatOut[3])*flatOut1[3]*flatOut2[0] - sin(flatOut[3])*flatOut3[1]
-	- cos(flatOut[3])*flatOut1[3]*flatOut2[1] - cos(flatOut[3])*flatOut3[0];
+	// Transform to Vrep convention
+	matrix vTemp = vectorVrepTransform(matrix({{state.x},{state.y},{state.z}}));
+	state.x = EX_TO_DOUBLE(vTemp(0,0));
+	state.y = EX_TO_DOUBLE(vTemp(1,0));
+	state.z = EX_TO_DOUBLE(vTemp(2,0));
 
-	ex d_bb = -flatOut3[2];
+	vTemp = vectorVrepTransform(matrix({{state.vx},{state.vy},{state.vz}}));
+	state.vx = EX_TO_DOUBLE(vTemp(0,0));
+	state.vy = EX_TO_DOUBLE(vTemp(1,0));
+	state.vz = EX_TO_DOUBLE(vTemp(2,0));
 
-	// d_bc = cos(s4(t))*diff(s2(t), t, t, t) - sin(s4(t))*diff(s1(t), t, t, t) +
-	// - cos(s4(t))*diff(s4(t), t)*diff(s1(t), t, t) - sin(s4(t))*diff(s4(t), t)*diff(s2(t), t, t)
-	ex d_bc = cos(flatOut[3])*flatOut3[1] - sin(flatOut[3])*flatOut3[0]
-	- cos(flatOut[3])*flatOut1[3]*flatOut2[0] - sin(flatOut[3])*flatOut1[3]*flatOut2[1];
+	matrix abg = matrix2abg(rpy2matrix(phi, theta, psi));
+	state.a = EX_TO_DOUBLE(abg(0,0));
+	state.b = EX_TO_DOUBLE(abg(1,0));
+	state.g = EX_TO_DOUBLE(abg(2,0));
 
-	// d_theta = d_Atan(ba(t)/bb(t))
-	ex d_theta = 1 / (1 + (ba / bb)*(ba / bb)) * (d_ba * bb - ba * d_bb) / (bb * bb);
+	vTemp = vectorVrepTransform(matrix({{state.p},{state.q},{state.r}}));
+	state.p = EX_TO_DOUBLE(vTemp(0,0));
+	state.q = EX_TO_DOUBLE(vTemp(1,0));
+	state.r = EX_TO_DOUBLE(vTemp(2,0));
 
-	// d_phi = (diff(bc_(t), t)/(ba_(t)^2 + bb_(t)^2)^(1/2) - (bc_(t)*(ba_(t)*diff(ba_(t), t)
-	// + bb_(t)*diff(bb_(t), t)))/(ba_(t)^2 + bb_(t)^2)^(3/2))/(bc_(t)^2/(ba_(t)^2 + bb_(t)^2) + 1)
-	ex d_phi = (d_bc/pow(ba*ba + bb*bb, 1/2) - (bc*(ba*d_ba
-		+ bb*d_bb))/pow(ba*ba + bb*bb, 3/2))/(bc*bc/(ba*ba + bb*bb) + 1);
- 
-	ex d_psi = flatOut1[3];
-
-	matrix angVel = T.mul({{d_phi}, {d_theta}, {d_psi}});
-	state.p = EX_TO_DOUBLE(angVel(0,0));
-	state.q = EX_TO_DOUBLE(angVel(1,0));
-	state.r = EX_TO_DOUBLE(angVel(2,0));
-
-	// debug
-	//cout << "flatOut, flatOut1:" << endl;
-	//cout << flatOut[0] << ", "<< flatOut[1] << ", "<< flatOut[2] << ", "<< flatOut[3]<< endl;
-	//cout << flatOut1[0] << ", "<< flatOut1[1] << ", "<< flatOut1[2] << ", "<< flatOut1[3]<< endl;
-
-	//cout << "state:" << endl;
-	//cout << state.x << ", "<< state.y << ", "<< state.z << endl;
-	//cout << state.vx << ", "<< state.vy << ", "<< state.vz << endl;
-	//cout << state.phi << ", "<< state.theta << ", "<< state.psi << endl;
-	//cout << state.p << ", "<< state.q << ", "<< state.r << endl;
-
+	// Debug
+	cout << "state: " << state.x << ", " << state.y << ", " << state.z << "; "
+	 	<< state.vx << ", " << state.vy << ", " << state.vz << "; "
+	 	<< state.a << ", " << state.b << ", " << state.g << "; "
+	 	<< state.p << ", " << state.q << ", " << state.r << endl;
 }
 
 
 void flatOutputs2inputs(Inputs &inputs) {
 
 	// substitute symbolic equations
-	exmap symMap;
-	symMap[Sx] = flatOut[0];
-	symMap[Sy] = flatOut[1];
-	symMap[Sz] = flatOut[2];
-	symMap[Syaw] = flatOut[3];
 	ex u_torque_f = equations.u_torque.evalf();
 	
 	inputs.tx = EX_TO_DOUBLE(ex_to<matrix>(u_torque_f)(0,0));
@@ -345,7 +386,8 @@ void genSymbolicEquations(void) {
 	
 	// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - 9.8 * [0;0;1])
 	matrix xyz_D2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
-	ex flatOut_D2_sube = (xyz_D2 - matrix({{0},{0},{9.8}}));
+	//ex flatOut_D2_sube = (xyz_D2 - matrix({{0},{0},{9.8}}));
+	ex flatOut_D2_sube = (xyz_D2);
 	matrix flatOut_D2_subm = ex_to<matrix>(flatOut_D2_sube.evalm());
 	ex innerProd = flatOut_D2_subm.transpose() * flatOut_D2_subm;
 	matrix innerProdM = ex_to<matrix>(innerProd.evalm());
@@ -392,13 +434,7 @@ int initField(string fieldFilePath) {
 		vectFieldSym.set(i, 0, e);
 	}
 
-	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
-	if (nVars >= 2) {
-		vectFieldSym.set(1, 0, -vectFieldSym(1, 0));
-	}
-	if (nVars >= 3) {
-		vectFieldSym.set(2, 0, -vectFieldSym(2, 0));
-	}
+	// TODO: inertia ed eqs. change of ref
 
 	// Save the first flat output derivative d(sigma)/dt=V(x)
 	flatOut_D1 = vectFieldSym;
@@ -419,8 +455,11 @@ int initField(string fieldFilePath) {
 void updateState(Inputs &inputs, double x, double y, double z, double yaw) {
 	
 	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
-	y = -y;
-	z = -z;
+	matrix vTemp = vectorVrepTransform(matrix({{x}, {y}, {z}}));
+	x = EX_TO_DOUBLE(vTemp(0,0));
+	y = EX_TO_DOUBLE(vTemp(1,0));
+	z = EX_TO_DOUBLE(vTemp(2,0));
+	// NOTE: yaw is ignored! (assumed 0)
 
 	// Evaluate the D4 vectors numerically
 	exmap symMap;
@@ -431,14 +470,10 @@ void updateState(Inputs &inputs, double x, double y, double z, double yaw) {
 
 	// fill the globals flatOutputs derivatives
 	for (unsigned i = 0; i < nVars; ++i) {
-		flatOut1[i] = flatOut_D1(i,0).subs(symMap);
-		flatOut2[i] = flatOut_D2(i,0).subs(symMap);
-		flatOut3[i] = flatOut_D3(i,0).subs(symMap);
-		flatOut4[i] = flatOut_D4(i,0).subs(symMap);
-		//flatOut1[i] = ex_to<numeric>(flatOut_D1(i,0).subs(symMap)).to_double();
-		//flatOut2[i] = ex_to<numeric>(flatOut_D2(i,0).subs(symMap)).to_double();
-		//flatOut3[i] = ex_to<numeric>(flatOut_D3(i,0).subs(symMap)).to_double();
-		//flatOut4[i] = ex_to<numeric>(flatOut_D4(i,0).subs(symMap)).to_double();
+		flatOut1[i] = flatOut_D1(i,0).subs(symMap).evalf();
+		flatOut2[i] = flatOut_D2(i,0).subs(symMap).evalf();
+		flatOut3[i] = flatOut_D3(i,0).subs(symMap).evalf();
+		flatOut4[i] = flatOut_D4(i,0).subs(symMap).evalf();
 	}
 	for (unsigned i = nVars; i < 4; ++i) {
 		flatOut1[i] = 0;
@@ -454,8 +489,12 @@ void updateState(Inputs &inputs, double x, double y, double z, double yaw) {
 
 	// Get the state of the quadrotor
 	State state;
-	flatOutputs2state(state, flatOut, flatOut1, flatOut2, flatOut3);
+	flatOutputs2state(state);
 	flatOutputs2inputs(inputs);
+
+	// DEBUG
+	//cout << "vecField: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
+	//	flatOut1[2] << ", " << flatOut1[3] << endl;
 }
 
 
@@ -645,13 +684,14 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 
 int main() {
 
-	mass = 2;
-	J_inertia.set(3,3,unit_matrix(3,3));
+	// CLN setting of 0 exception
+	cln::cl_inhibit_floating_point_underflow = true;
 
 	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
+	mass = 1;
 
-	Inputs inputs;
-	updateState(inputs, 1,-1,2,1);
+	Inputs inp;
+	updateState(inp, 2, 3, 4, 0);
 
 
 }
