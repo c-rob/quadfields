@@ -11,6 +11,8 @@ using namespace std;
 
 LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 
+// GinaC settings
+bool cln::cl_inhibit_floating_point_underflow = true;
 
 // Plugin global variables
 unsigned nVars = 0;					// the number of symbolic vars (up to 4)
@@ -172,13 +174,12 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 		// mass
 		mass = inData->at(1).doubleData[0];
 
-		// inertia matrix: TODO: move inside initField and rotate
+		// inertia matrix
 		for (unsigned r = 0; r < 3; ++r) {
 			for (unsigned c = 0; c < 3; ++c) {
 				J_inertia(r,c) = inData->at(2).doubleData[r*3+c];
 			}
 		}
-
 
 		// call
 		ret = initField(fileName);
@@ -316,6 +317,7 @@ void flatOutputs2state(State &state) {
 	state.vy = EX_TO_DOUBLE(vTemp(1,0));
 	state.vz = EX_TO_DOUBLE(vTemp(2,0));
 
+        // This must be compared to the dummy object in vrep scene (paper axis convention)
 	matrix abg = matrix2abg(rpy2matrix(phi, theta, psi));
 	state.a = EX_TO_DOUBLE(abg(0,0));
 	state.b = EX_TO_DOUBLE(abg(1,0));
@@ -335,8 +337,6 @@ void flatOutputs2state(State &state) {
 
 
 void flatOutputs2inputs(Inputs &inputs) {
-
-	// TODO: convert in vrep convention? inertia?
 
 	// substitute symbolic equations
 	ex u_torque_f = equations.u_torque.evalf();
@@ -455,14 +455,13 @@ int initField(string fieldFilePath) {
 
 // The registered vrep function for evaluating the inputs
 void updateState(Inputs &inputs, double x, double y, double z, double yaw) {
-	
+
 	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
 	matrix vTemp = vectorVrepTransform(matrix({{x}, {y}, {z}}));
 	x = EX_TO_DOUBLE(vTemp(0,0));
 	y = EX_TO_DOUBLE(vTemp(1,0));
 	z = EX_TO_DOUBLE(vTemp(2,0));
-	// NOTE: yaw is ignored! (assumed 0)
-	// TODO: check and fix axis conversions
+	yaw = 0; // NOTE: yaw is ignored! (assumed 0)
 
 	// Evaluate the D4 vectors numerically
 	exmap symMap;
