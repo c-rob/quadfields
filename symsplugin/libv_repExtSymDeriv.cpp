@@ -266,8 +266,10 @@ matrix matrix2abg(matrix m) {
 
 
 // given the vector of the variables, the symbolic vector src in inputs
-// computes the next derivative through dv = J_v * v
-void genNextDerivative(const vector <symbol> vars, const matrix& src, matrix& dest) {
+// computes the next derivative through dv/dt = J_v(x) * dx/dt
+//  NOTE: This is different from the reference paper! They wrote dv/dt = J_v(x) * v
+void genNextDerivative(const vector <symbol> vars, const matrix& src,
+        const matrix& dx, matrix& dest) {
 
 	unsigned nVars = vars.size();
 	matrix jacob(nVars, nVars);
@@ -277,7 +279,7 @@ void genNextDerivative(const vector <symbol> vars, const matrix& src, matrix& de
 		}
 	}
 
-	dest = jacob.mul(src);
+	dest = jacob.mul(dx);
 }
 
 
@@ -333,6 +335,8 @@ void flatOutputs2state(State &state) {
 
 
 void flatOutputs2inputs(Inputs &inputs) {
+
+	// TODO: convert in vrep convention? inertia?
 
 	// substitute symbolic equations
 	ex u_torque_f = equations.u_torque.evalf();
@@ -433,16 +437,14 @@ int initField(string fieldFilePath) {
 		ex e = reader(vectFieldStr[i]);
 		vectFieldSym.set(i, 0, e);
 	}
-
-	// TODO: inertia ed eqs. change of ref
-
+	
 	// Save the first flat output derivative d(sigma)/dt=V(x)
 	flatOut_D1 = vectFieldSym;
 
 	// Compute next derivatives
-	genNextDerivative(vars, flatOut_D1, flatOut_D2);
-	genNextDerivative(vars, flatOut_D2, flatOut_D3);
-	genNextDerivative(vars, flatOut_D3, flatOut_D4);
+	genNextDerivative(vars, flatOut_D1, flatOut_D1, flatOut_D2);
+	genNextDerivative(vars, flatOut_D2, flatOut_D1, flatOut_D3);
+	genNextDerivative(vars, flatOut_D3, flatOut_D1, flatOut_D4);
 
 	// Save equations to globals
 	genSymbolicEquations();
@@ -460,6 +462,7 @@ void updateState(Inputs &inputs, double x, double y, double z, double yaw) {
 	y = EX_TO_DOUBLE(vTemp(1,0));
 	z = EX_TO_DOUBLE(vTemp(2,0));
 	// NOTE: yaw is ignored! (assumed 0)
+	// TODO: check and fix axis conversions
 
 	// Evaluate the D4 vectors numerically
 	exmap symMap;
@@ -688,10 +691,12 @@ int main() {
 	cln::cl_inhibit_floating_point_underflow = true;
 
 	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
+	/*
 	mass = 1;
 
 	Inputs inp;
 	updateState(inp, 2, 3, 4, 0);
+	*/
 
 
 }
