@@ -59,7 +59,7 @@ matrix flatOut_D4;
 
 
 // forward declaration
-void updateState(Inputs &inputs, double x, double y, double z, double yaw);
+void updateState(Inputs &inputs, State &state, double x, double y, double z, double yaw);
 
 
 /*
@@ -203,7 +203,8 @@ void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 		double yaw = inData->at(3).doubleData[0];
 
 		// call
-		updateState(inputs, x, y, z, yaw);
+	    State state;
+		updateState(inputs, state, x, y, z, yaw);
 
     }
 	// return quadrotor inputs
@@ -307,12 +308,12 @@ void flatOutputs2state(State &state) {
 	 
 	
 	// Transform to Vrep convention
-	matrix vTemp = vectorVrepTransform(matrix({{state.x},{state.y},{state.z}}));
+	matrix vTemp = vectorVrepTransform(matrix({{x},{y},{z}}));
 	state.x = EX_TO_DOUBLE(vTemp(0,0));
 	state.y = EX_TO_DOUBLE(vTemp(1,0));
 	state.z = EX_TO_DOUBLE(vTemp(2,0));
 
-	vTemp = vectorVrepTransform(matrix({{state.vx},{state.vy},{state.vz}}));
+	vTemp = vectorVrepTransform(matrix({{vx},{vy},{vz}}));
 	state.vx = EX_TO_DOUBLE(vTemp(0,0));
 	state.vy = EX_TO_DOUBLE(vTemp(1,0));
 	state.vz = EX_TO_DOUBLE(vTemp(2,0));
@@ -323,16 +324,18 @@ void flatOutputs2state(State &state) {
 	state.b = EX_TO_DOUBLE(abg(1,0));
 	state.g = EX_TO_DOUBLE(abg(2,0));
 
-	vTemp = vectorVrepTransform(matrix({{state.p},{state.q},{state.r}}));
+	vTemp = vectorVrepTransform(matrix({{p},{q},{r}}));
 	state.p = EX_TO_DOUBLE(vTemp(0,0));
 	state.q = EX_TO_DOUBLE(vTemp(1,0));
 	state.r = EX_TO_DOUBLE(vTemp(2,0));
 
 	// Debug
+    /*
 	cout << "state: " << state.x << ", " << state.y << ", " << state.z << "; "
 	 	<< state.vx << ", " << state.vy << ", " << state.vz << "; "
 	 	<< state.a << ", " << state.b << ", " << state.g << "; "
 	 	<< state.p << ", " << state.q << ", " << state.r << endl;
+    */
 }
 
 
@@ -399,6 +402,23 @@ void genSymbolicEquations(void) {
 }
 
 
+void setVrepInitialState(void) {
+
+    // get initial position of the quadcopter shape
+    // 
+
+    // TODO: move the initial configuration outside the code
+    // 
+    Inputs inputs;
+    State state;
+    updateState(inputs, state, 2, 0, 1, 0);
+    std::cout << "Initial state: [" << state.x << ", " << state.y << ", " << state.z << ", " << state.vx << ", "
+        << state.vy << ", " << state.vz << ", " << state.a << ", " << state.b << ", " << state.g << ", " 
+        << state.p << ", " << state.q << ", " << state.r << "] \n";
+
+}
+
+
 int initField(string fieldFilePath) {
 
 	string line;
@@ -449,12 +469,15 @@ int initField(string fieldFilePath) {
 	// Save equations to globals
 	genSymbolicEquations();
 
+    // Assigns initial config in vrep scene to match the vector field
+    setVrepInitialState();
+
 	return true;
 }
 
 
 // The registered vrep function for evaluating the inputs
-void updateState(Inputs &inputs, double x, double y, double z, double yaw) {
+void updateState(Inputs &inputs, State &state, double x, double y, double z, double yaw) {
 
 	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
 	matrix vTemp = vectorVrepTransform(matrix({{x}, {y}, {z}}));
@@ -490,7 +513,6 @@ void updateState(Inputs &inputs, double x, double y, double z, double yaw) {
 	flatOut[3] = yaw;
 
 	// Get the state of the quadrotor
-	State state;
 	flatOutputs2state(state);
 	flatOutputs2inputs(inputs);
 
