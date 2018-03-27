@@ -18,4 +18,5 @@ Dingjiang Zhou and Mac Schwager
 		and copy to the v-rep installation directory
 
 ### Notes:
-	* If the quadrotor dynamic properties changes, vrep must be restarted
+	* The plugin assumes that the quadrotor is a single dynamic shape
+        in the vrep scene that is called "Quadrirotor".

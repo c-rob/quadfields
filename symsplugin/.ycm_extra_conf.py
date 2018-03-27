@@ -4,7 +4,7 @@ def FlagsForFile( filename, **kwargs ):
 	
 	localIncludePaths = [
 		'.',
-		'/home/roberto/bin/V-REP/programming/include/'
+		'/home/roberto/Desktop/Erob/V-REP/symsplugin/vrep/include/'
 	]
 	defines = [
 		'__linux'

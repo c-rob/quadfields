@@ -150,7 +150,7 @@ const int inArgs_INIT[]={
     3,
 	sim_script_arg_string,1,
 	sim_script_arg_double,1,
-	sim_script_arg_table | sim_script_arg_double,9
+	sim_script_arg_table | sim_script_arg_double,9,
 };
 const int inArgs_UPDATE[]={
     4,
@@ -264,6 +264,23 @@ matrix matrix2abg(matrix m) {
 	ex g = atan2(-m(0,1), m(0,0));
 
 	return matrix({{a}, {b}, {g}});
+}
+
+
+void angvel2abg(float Dabg[], const double p, const double q, const double r,
+		const double a, const double b, const double g) {
+
+	// NOTE: singularity at cos(b)=0
+
+	matrix pqr = {{p}, {q}, {r}};
+	matrix T = {{ 1, (sin(a)*sin(b))/cos(b), -(cos(a)*sin(b))/cos(b)},
+		{ 0, cos(a), sin(a)},
+		{ 0, -sin(a)/cos(b),  cos(a)/cos(b)}};
+	matrix Dabg_m = T.mul(pqr);
+
+	Dabg[0] = (float)EX_TO_DOUBLE(Dabg_m(0,0));
+	Dabg[1] = (float)EX_TO_DOUBLE(Dabg_m(1,0));
+	Dabg[2] = (float)EX_TO_DOUBLE(Dabg_m(2,0));
 }
 
 
@@ -404,17 +421,41 @@ void genSymbolicEquations(void) {
 
 void setVrepInitialState(void) {
 
-    // get initial position of the quadcopter shape
-    // 
 
-    // TODO: move the initial configuration outside the code
-    // 
+    // get initial position of the quadcopter shape
+    int quadcopterH = simGetObjectHandle("Quadricopter");
+	float initPos[3];
+	simGetObjectPosition(quadcopterH, -1, initPos);
+	
+	// Compute a configuration in the field
     Inputs inputs;
     State state;
-    updateState(inputs, state, 2, 0, 1, 0);
-    std::cout << "Initial state: [" << state.x << ", " << state.y << ", " << state.z << ", " << state.vx << ", "
+    updateState(inputs, state, initPos[0], initPos[1], initPos[2], 0); // note: yaw 0
+    	/* std::cout << "Initial state: [" << state.x << ", " << state.y << ", " << state.z << ", " << state.vx << ", "
         << state.vy << ", " << state.vz << ", " << state.a << ", " << state.b << ", " << state.g << ", " 
         << state.p << ", " << state.q << ", " << state.r << "] \n";
+		*/
+	
+	// Set other properties
+	const float abg[] = {(float)state.a, (float)state.b, (float)state.g};
+	simSetObjectOrientation(quadcopterH, -1, abg);
+
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_x, (float)state.vx);
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_y, (float)state.vy);
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_z, (float)state.vz);
+
+	float Dabg[3];
+	angvel2abg(Dabg, state.p, state.q, state.r, state.a, state.b, state.g);
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a, Dabg[0]);
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, Dabg[1]);
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, Dabg[2]);
+
+
+	cout << "client quad handle " << quadcopterH << endl;
+	cout << "initPos " << initPos[0] << ", " << initPos[1] << ", " << initPos[2] << endl;
+	cout << "initVel " << state.vx << ", " << state.vy << ", " << state.vz << endl;
+	cout << "orient " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
+	cout << "Dorient " << Dabg[0] << ", " << Dabg[1] << ", " << Dabg[2] << endl;
 
 }
 
