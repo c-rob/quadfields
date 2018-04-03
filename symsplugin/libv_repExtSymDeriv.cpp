@@ -59,7 +59,8 @@ matrix flatOut_D4;
 
 
 // forward declaration
-void updateState(Inputs &inputs, State &state, double x, double y, double z, double yaw);
+void updateState(Inputs &inputs, State &state, double x, double y, double z,
+        double a, double b, double g);
 
 
 /*
@@ -153,11 +154,9 @@ const int inArgs_INIT[]={
 	sim_script_arg_table | sim_script_arg_double,9,
 };
 const int inArgs_UPDATE[]={
-    4,
-    sim_script_arg_double,1,
-    sim_script_arg_double,1,
-    sim_script_arg_double,1,
-    sim_script_arg_double,1
+    2,
+	sim_script_arg_table | sim_script_arg_double,3,
+	sim_script_arg_table | sim_script_arg_double,3,
 };
 
 
@@ -198,13 +197,15 @@ void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
     {
         std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
 		double x = inData->at(0).doubleData[0];
-		double y = inData->at(1).doubleData[0];
-		double z = inData->at(2).doubleData[0];
-		double yaw = inData->at(3).doubleData[0];
+		double y = inData->at(0).doubleData[1];
+		double z = inData->at(0).doubleData[2];
+		double a = inData->at(1).doubleData[0];
+		double b = inData->at(1).doubleData[1];
+		double g = inData->at(1).doubleData[2];
 
 		// call
 	    State state;
-		updateState(inputs, state, x, y, z, yaw);
+		updateState(inputs, state, x, y, z, a, b, g);
 
     }
 	// return quadrotor inputs
@@ -337,14 +338,14 @@ void flatOutputs2state(State &state) {
 
         // This must be compared to the dummy object in vrep scene (paper axis convention)
 	matrix abg = matrix2abg(rpy2matrix(phi, theta, psi));
-	state.a = EX_TO_DOUBLE(abg(0,0));
-	state.b = EX_TO_DOUBLE(abg(1,0));
-	state.g = EX_TO_DOUBLE(abg(2,0));
+	state.a = EX_TO_DOUBLE(ex_to<matrix>(abg)(0,0));
+	state.b = EX_TO_DOUBLE(ex_to<matrix>(abg)(1,0));
+	state.g = EX_TO_DOUBLE(ex_to<matrix>(abg)(2,0));
 
 	vTemp = vectorVrepTransform(matrix({{p},{q},{r}}));
-	state.p = EX_TO_DOUBLE(vTemp(0,0));
-	state.q = EX_TO_DOUBLE(vTemp(1,0));
-	state.r = EX_TO_DOUBLE(vTemp(2,0));
+	state.p = EX_TO_DOUBLE(ex_to<matrix>(vTemp)(0,0));
+	state.q = EX_TO_DOUBLE(ex_to<matrix>(vTemp)(1,0));
+	state.r = EX_TO_DOUBLE(ex_to<matrix>(vTemp)(2,0));
 
 	// Debug
     /*
@@ -430,11 +431,8 @@ void setVrepInitialState(void) {
 	// Compute a configuration in the field
     Inputs inputs;
     State state;
-    updateState(inputs, state, initPos[0], initPos[1], initPos[2], 0); // note: yaw 0
-    	/* std::cout << "Initial state: [" << state.x << ", " << state.y << ", " << state.z << ", " << state.vx << ", "
-        << state.vy << ", " << state.vz << ", " << state.a << ", " << state.b << ", " << state.g << ", " 
-        << state.p << ", " << state.q << ", " << state.r << "] \n";
-		*/
+    updateState(inputs, state, initPos[0], initPos[1], initPos[2], 0, 0, 0);
+        // NOTE: arg 8 is the 4-th flat output. 6-7 args are not needed
 	
 	// Set other properties
 	const float abg[] = {(float)state.a, (float)state.b, (float)state.g};
@@ -518,14 +516,17 @@ int initField(string fieldFilePath) {
 
 
 // The registered vrep function for evaluating the inputs
-void updateState(Inputs &inputs, State &state, double x, double y, double z, double yaw) {
+void updateState(Inputs &inputs, State &state, double x, double y, double z,
+        double a, double b, double g) {
 
 	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
 	matrix vTemp = vectorVrepTransform(matrix({{x}, {y}, {z}}));
 	x = EX_TO_DOUBLE(vTemp(0,0));
 	y = EX_TO_DOUBLE(vTemp(1,0));
 	z = EX_TO_DOUBLE(vTemp(2,0));
-	yaw = 0; // NOTE: yaw is ignored! (assumed 0)
+
+    matrix rpy = matrix2rpy(abg2matrix(a, b, g));
+	double yaw = EX_TO_DOUBLE(rpy(2,0));
 
 	// Evaluate the D4 vectors numerically
 	exmap symMap;
@@ -757,7 +758,6 @@ int main() {
 	mass = 1;
 
 	Inputs inp;
-	updateState(inp, 2, 3, 4, 0);
 	*/
 
 
