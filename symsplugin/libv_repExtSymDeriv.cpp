@@ -57,6 +57,9 @@ matrix flatOut_D2;
 matrix flatOut_D3;
 matrix flatOut_D4;
 
+// Debug symbols to delete
+ex part1;
+ex R, d_R, dd_R, d_sR;
 
 // forward declaration
 void updateState(Inputs &inputs, State &state, double x, double y, double z,
@@ -91,6 +94,7 @@ static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_p
 
 static ex eval_symF(const ex &var, const ex &nDiff, const ex &t) {
 
+	// TODO: is this an error? reference at 0 doesn't mean flatOut to 0
 	// Simplify symbolic equations if the vector field do not specifies z or yaw
 	if (var.is_equal(Sz) && nVars < 3 && nDiff > 0) {
 		return 0;
@@ -387,10 +391,11 @@ void genSymbolicEquations(void) {
 
 	// Euler rates rpy to angular velocity
 	equations.T = {
-		{ cos(equations.phi) * cos(equations.theta), -sin(equations.phi), 0},
-		{ cos(equations.theta) * sin(equations.phi), cos(equations.phi), 0},
-		{ -sin(equations.theta), 0, 1}
+		{ 0, -sin(equations.phi), cos(equations.phi)*cos(equations.theta) },
+		{ 0, cos(equations.phi), cos(equations.theta)*sin(equations.phi) },
+		{ 1, 0, -sin(equations.theta)}
 	};
+ 
 	ex temp_omega = equations.T * matrix({{equations.d_phi},
 			{equations.d_theta}, {equations.d_psi}});
 	ex temp_d_omega = temp_omega.diff(St);
@@ -408,6 +413,18 @@ void genSymbolicEquations(void) {
 	//	* J_inertia * equations.omega;
 	ex temp_u_torque = J_inertia * equations.d_omega + skewOmega * J_inertia * equations.omega;
 	equations.u_torque = ex_to<matrix>(temp_u_torque.evalm());
+
+	// Second equation for torque using derivatives of rotation matrices
+	// Debug
+	matrix R = rpy2matrix(equations.phi, equations.theta, equations.psi);
+	d_R = R.diff(St);
+	d_sR = skewOmega.mul(R);
+
+	dd_R = R.diff(St);
+	part1 = ex_to<matrix>(d_R).transpose() * d_R + R.transpose() * dd_R;
+	part1 = part1.evalm();
+		// mul J to the left
+	// end debug
 	
 	// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - 9.8 * [0;0;1])
 	matrix xyz_D2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
@@ -417,6 +434,8 @@ void genSymbolicEquations(void) {
 	ex innerProd = flatOut_D2_subm.transpose() * flatOut_D2_subm;
 	matrix innerProdM = ex_to<matrix>(innerProd.evalm());
 	equations.u_thrust = mass * sqrt(innerProdM(0,0));
+
+
 }
 
 
@@ -449,12 +468,15 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, Dabg[2]);
 
 
-	cout << "client quad handle " << quadcopterH << endl;
 	cout << "initPos " << initPos[0] << ", " << initPos[1] << ", " << initPos[2] << endl;
 	cout << "initVel " << state.vx << ", " << state.vy << ", " << state.vz << endl;
 	cout << "orient " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
 	cout << "Dorient " << Dabg[0] << ", " << Dabg[1] << ", " << Dabg[2] << endl;
 
+	// debug
+	cout << "d_R: " << d_R.evalf() << endl << endl;
+	cout << "d_sR: " << d_sR.evalf() << endl;
+	cout << "part1: " << part1.evalf() << endl;
 }
 
 
@@ -559,8 +581,14 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	flatOutputs2inputs(inputs);
 
 	// DEBUG
-	//cout << "vecField: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
-	//	flatOut1[2] << ", " << flatOut1[3] << endl;
+	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
+		flatOut[2] << ", " << flatOut[3] << endl;
+	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
+		flatOut1[2] << ", " << flatOut1[3] << endl;
+	cout << "flatOut2: " << flatOut2[0] << ", " << flatOut2[1] << ", " <<
+		flatOut2[2] << ", " << flatOut2[3] << endl;
+	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
+		flatOut3[2] << ", " << flatOut3[3] << endl;
 }
 
 
