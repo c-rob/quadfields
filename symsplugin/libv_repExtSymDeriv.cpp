@@ -15,7 +15,8 @@ LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 bool cln::cl_inhibit_floating_point_underflow = true;
 
 // Plugin global variables
-unsigned nVars = 0;					// the number of symbolic vars (up to 4)
+int quadcopterH = -1;
+unsigned nVars = 0;					// The number of lines in the vector field file
 
 // dynamic properties
 float mass = 0;
@@ -435,7 +436,6 @@ void genSymbolicEquations(void) {
 	matrix innerProdM = ex_to<matrix>(innerProd.evalm());
 	equations.u_thrust = mass * sqrt(innerProdM(0,0));
 
-
 }
 
 
@@ -443,7 +443,7 @@ void setVrepInitialState(void) {
 
 
     // get initial position of the quadcopter shape
-    int quadcopterH = simGetObjectHandle("Quadricopter");
+    quadcopterH = simGetObjectHandle("Quadricopter");
 	float initPos[3];
 	simGetObjectPosition(quadcopterH, -1, initPos);
 	
@@ -510,10 +510,11 @@ int initField(string fieldFilePath) {
 		++nVars;
 	}
 	vectFile.close();
-	vars.erase(vars.begin()+nVars, vars.end());
+	//vars.erase(vars.begin()+nVars, vars.end());
+		// NOTE: if this is commented, differentiation is on all 4 vars (usually nothing changes)
 
 	// Fill a symbolic matrix
-	matrix vectFieldSym(nVars, 1);
+	matrix vectFieldSym(4, 1);
 	for (unsigned i = 0; i < nVars; ++i) {
 		ex e = reader(vectFieldStr[i]);
 		vectFieldSym.set(i, 0, e);
@@ -558,18 +559,13 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	symMap[Syaw] = yaw;
 
 	// fill the globals flatOutputs derivatives
-	for (unsigned i = 0; i < nVars; ++i) {
+	for (unsigned i = 0; i < 4; ++i) {
 		flatOut1[i] = flatOut_D1(i,0).subs(symMap).evalf();
 		flatOut2[i] = flatOut_D2(i,0).subs(symMap).evalf();
 		flatOut3[i] = flatOut_D3(i,0).subs(symMap).evalf();
 		flatOut4[i] = flatOut_D4(i,0).subs(symMap).evalf();
 	}
-	for (unsigned i = nVars; i < 4; ++i) {
-		flatOut1[i] = 0;
-		flatOut2[i] = 0;
-		flatOut3[i] = 0;
-		flatOut4[i] = 0;
-	}
+
 	// save to global
 	flatOut[0] = x;
 	flatOut[1] = y;
@@ -581,6 +577,7 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	flatOutputs2inputs(inputs);
 
 	// DEBUG
+	/*
 	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
 		flatOut[2] << ", " << flatOut[3] << endl;
 	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
@@ -589,6 +586,31 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 		flatOut2[2] << ", " << flatOut2[3] << endl;
 	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
 		flatOut3[2] << ", " << flatOut3[3] << endl;
+	*/
+
+	// debug: set velocities
+	matrix testPos = {{x}, {y}, {z}};
+	matrix testVel = {{state.vx},{state.vy},{state.vz}};
+	cout << "pos (paper): " << testPos << endl;
+	cout << "vel (vrep): " << testVel  << endl;
+
+	matrix testPosP = {{x}, {-y}, {-z}};
+	ex newPos = testPosP + 0.01 * testVel;
+	matrix newPosM = ex_to<matrix>(newPos.evalm());
+	float newPosF[3];
+	newPosF[0] = EX_TO_DOUBLE(newPosM(0,0));
+	newPosF[1] = EX_TO_DOUBLE(newPosM(1,0));
+	newPosF[2] = EX_TO_DOUBLE(newPosM(2,0));
+	simSetObjectPosition(quadcopterH, -1, newPosF);
+
+
+	// debug: off motors
+	inputs.fz = 0;
+	inputs.tx = 0;
+	inputs.ty = 0;
+	inputs.tz = 0;
+
+	// TODO: reenable dynamic quadcopterH
 }
 
 
