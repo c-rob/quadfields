@@ -4,7 +4,7 @@
 VREPDIR=~/bin/V-REP
 
 CXX=gcc
-CXXFLAGS=-x c++ -std=c++11 -Wall -Wextra -O3 -fPIC
+CXXFLAGS=-x c++ -std=c++11 -Wall -Wextra -Wno-unused-parameter -O3 -fPIC
 LDFLAGS=-lstdc++ -ldl -lcln -lginac
 
 # all built files in the current dir

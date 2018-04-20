@@ -70,7 +70,7 @@ matrix flatOut_D4;
 // Debug symbols to delete
 ex part1;
 ex R, d_R, dd_R, d_sR;
-ex intVel, intAcc, intJerk;
+ex intVel;
 
 
 /*
@@ -261,7 +261,11 @@ matrix abg2matrix(const ex a, const ex b, const ex g) {
 	matrix Ry = {{cos(b), 0, sin(b)}, {0, 1, 0}, {-sin(b), 0, cos(b)}};
 	matrix Rx = {{1, 0, 0}, {0, cos(a), -sin(a)}, {0, sin(a), cos(a)}};
 
-	return Rx.mul(Ry.mul(Rz));
+	// Debug: Should I take the inverted axis into account?
+	matrix Ryi = Ry.transpose();
+	matrix Rzi = Rz.transpose();
+
+	return Rx.mul(Ryi.mul(Rzi));
 }
 
 
@@ -273,15 +277,22 @@ matrix matrix2rpy(matrix m) {
 	ex psi = atan2(m(1,0), m(0,0));
 
 	return matrix({{phi}, {theta}, {psi}});
+	
 }
 
 
 matrix matrix2abg(matrix m) {
 	// [a,b,g] = [alpha,beta,gamma]
 
+	// Debug: Should I take the inverted axis into account?
+	/*
 	ex a = atan2(-m(1,2), m(2,2));
 	ex b = atan2(m(0,2), sqrt(m(1,2)*m(1,2) + m(2,2)*m(2,2)));
 	ex g = atan2(-m(0,1), m(0,0));
+	*/
+	ex a = atan2(-m(1,2), m(2,2));
+	ex b = atan2(-m(0,2), sqrt(m(1,2)*m(1,2) + m(2,2)*m(2,2)));
+	ex g = atan2(m(0,1), m(0,0));
 
 	return matrix({{a}, {b}, {g}});
 }
@@ -373,6 +384,9 @@ void flatOutputs2state(State &state) {
 	 	<< state.a << ", " << state.b << ", " << state.g << "; "
 	 	<< state.p << ", " << state.q << ", " << state.r << endl;
     */
+	cout << "phi: " << phi << endl;
+	cout << "theta: " << theta << endl;
+	cout << "psi: " << psi << endl;
 }
 
 
@@ -443,13 +457,12 @@ void genSymbolicEquations(void) {
 	
 	// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - 9.8 * [0;0;1])
 	matrix xyz_D2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
-	//ex flatOut_D2_sube = (xyz_D2 - matrix({{0},{0},{9.8}}));
-	ex flatOut_D2_sube = (xyz_D2);
+	ex flatOut_D2_sube = (xyz_D2 - matrix({{0},{0},{9.8}}));
+	//ex flatOut_D2_sube = (xyz_D2); // NOTE: with or without gravity compensation?
 	matrix flatOut_D2_subm = ex_to<matrix>(flatOut_D2_sube.evalm());
 	ex innerProd = flatOut_D2_subm.transpose() * flatOut_D2_subm;
 	matrix innerProdM = ex_to<matrix>(innerProd.evalm());
 	equations.u_thrust = mass * sqrt(innerProdM(0,0));
-
 }
 
 
@@ -489,11 +502,6 @@ void setVrepInitialState(void) {
 
 	// debug
 	intVel = vectorVrepTransform(matrix({{state.vx}, {state.vy}, {state.vz}}));
-	intAcc = matrix({{flatOut2[0]},{flatOut2[1]},{flatOut2[2]}});
-	intJerk = matrix({{flatOut3[0]},{flatOut3[1]},{flatOut3[2]}});
-	cout << "intVel (paper): " << intVel << endl;
-	cout << "intAcc (paper): " << intAcc << endl;
-	cout << "intJerk (paper): " << intJerk << endl;
 	//cout << "d_R: " << d_R.evalf() << endl << endl;
 	//cout << "d_sR: " << d_sR.evalf() << endl;
 	//cout << "part1: " << part1.evalf() << endl;
@@ -554,31 +562,12 @@ int initField(string fieldFilePath) {
     // Assigns initial config in vrep scene to match the vector field
     setVrepInitialState();
 
-	// debug
-	cout << "d1: " << flatOut_D1 << endl;
-	cout << "d2: " << flatOut_D2 << endl;
-	cout << "d3: " << flatOut_D3 << endl;
-	cout << "d4: " << flatOut_D4 << endl;
-
 	return true;
 }
 
 
 void debugging(Inputs &inputs, State &state, double x, double y, double z,
         double a, double b, double g) {
-	// Now checking flat outputs are consistent (first two at least)
-	
-	// DEBUG
-	/*
-	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
-		flatOut[2] << ", " << flatOut[3] << endl;
-	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
-		flatOut1[2] << ", " << flatOut1[3] << endl;
-	cout << "flatOut2: " << flatOut2[0] << ", " << flatOut2[1] << ", " <<
-		flatOut2[2] << ", " << flatOut2[3] << endl;
-	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
-		flatOut3[2] << ", " << flatOut3[3] << endl;
-	*/
 
 	// state
 	matrix pos = {{x}, {y}, {z}};
@@ -589,7 +578,6 @@ void debugging(Inputs &inputs, State &state, double x, double y, double z,
 	matrix snap = {{flatOut4[0]},{flatOut4[1]},{flatOut4[2]}};
 
 	// integrate velocities
-	/*
 	ex newPos = pos + 0.01 * vel;
 	matrix newPosM = ex_to<matrix>(newPos.evalm());
 	matrix newPosVM = vectorVrepTransform(newPosM);
@@ -597,63 +585,27 @@ void debugging(Inputs &inputs, State &state, double x, double y, double z,
 	newPosVF[0] = EX_TO_DOUBLE(newPosVM(0,0));
 	newPosVF[1] = EX_TO_DOUBLE(newPosVM(1,0));
 	newPosVF[2] = EX_TO_DOUBLE(newPosVM(2,0));
+
 	float abg[] = {(float)state.a, (float)state.b, (float)state.g};
+	cout << "abg: " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
+	matrix orientation = abg2matrix(abg[0], abg[1], abg[2]);
+	float matr[12];
+	matr[0] = EX_TO_DOUBLE(orientation(0,0));
+	matr[1] = EX_TO_DOUBLE(orientation(0,1));
+	matr[2] = EX_TO_DOUBLE(orientation(0,2));
+	matr[3] = newPosVF[0];
+	matr[4] = EX_TO_DOUBLE(orientation(1,0));
+	matr[5] = EX_TO_DOUBLE(orientation(1,1));
+	matr[6] = EX_TO_DOUBLE(orientation(1,2));
+	matr[7] = newPosVF[1];
+	matr[8] = EX_TO_DOUBLE(orientation(2,0));
+	matr[9] = EX_TO_DOUBLE(orientation(2,1));
+	matr[10] = EX_TO_DOUBLE(orientation(2,2));
+	matr[11] = newPosVF[2];
+
+	//simSetObjectMatrix(quadcopterH, -1, matr);
 	simSetObjectOrientation(quadcopterH, -1, abg);
-	*/
-
-	// integrate acceleration
-	/*
-	intVel = (intVel + 0.01*acc).evalm();
-	cout << "vel (integrated): " << intVel << endl;
-	cout << "vel (from field): " << vel << endl;
-	ex newIntPos = pos + 0.01 * intVel + 0.01*0.01*0.5*acc;
-	matrix newIntPosM = ex_to<matrix>(newIntPos.evalm());
-	matrix newIntPosVM = vectorVrepTransform(newIntPosM);
-	float newIntPosVF[3];
-	newIntPosVF[0] = EX_TO_DOUBLE(newIntPosVM(0,0));
-	newIntPosVF[1] = EX_TO_DOUBLE(newIntPosVM(1,0));
-	newIntPosVF[2] = EX_TO_DOUBLE(newIntPosVM(2,0));
-	simSetObjectPosition(quadcopterH, -1, newIntPosVF);
-	*/
-
-	// integrate jerk
-	/*
-	intAcc = (intAcc + 0.01*jerk).evalm();
-	intVel = (intVel + 0.01 * intAcc + 0.01*0.01*0.5*jerk).evalm();
-	cout << "vel (integrated): " << intVel << endl;
-	cout << "vel (from field): " << vel << endl;
-	cout << "acc (integrated): " << intAcc << endl;
-	cout << "acc (diff field): " << acc << endl << endl;
-	ex newIntPos = pos + 0.01*intVel + 0.01*0.01*intAcc/2 + 0.01*0.01*0.01 * jerk/6;
-	matrix newIntPosM = ex_to<matrix>(newIntPos.evalm());
-	matrix newIntPosVM = vectorVrepTransform(newIntPosM);
-	float newIntPosVF[3];
-	newIntPosVF[0] = EX_TO_DOUBLE(newIntPosVM(0,0));
-	newIntPosVF[1] = EX_TO_DOUBLE(newIntPosVM(1,0));
-	newIntPosVF[2] = EX_TO_DOUBLE(newIntPosVM(2,0));
-	simSetObjectPosition(quadcopterH, -1, newIntPosVF);
-	*/
-	
-	// integrate snap
-	intJerk = (intJerk + 0.01*snap).evalm();
-	intAcc = (intAcc + 0.01 * intJerk + 0.01*0.01*0.5*snap).evalm();
-	intVel = (intVel + 0.01 * intAcc + 0.01*0.01*0.5*intJerk + 
-			0.01*0.01*0.01*intJerk/6).evalm();
-	cout << "vel (integrated): " << intVel << endl;
-	cout << "vel (from field): " << vel << endl;
-	cout << "acc (integrated): " << intAcc << endl;
-	cout << "acc (diff field): " << acc << endl << endl;
-	cout << "jerk (integrated): " << intJerk << endl;
-	cout << "jerk (diff field): " << jerk << endl << endl;
-	ex newIntPos = pos + 0.01*intVel + 0.01*0.01*intAcc/2 + 0.01*0.01*0.01 * intJerk/6 + 
-		0.01*0.01*0.01*0.01*snap/24;
-	matrix newIntPosM = ex_to<matrix>(newIntPos.evalm());
-	matrix newIntPosVM = vectorVrepTransform(newIntPosM);
-	float newIntPosVF[3];
-	newIntPosVF[0] = EX_TO_DOUBLE(newIntPosVM(0,0));
-	newIntPosVF[1] = EX_TO_DOUBLE(newIntPosVM(1,0));
-	newIntPosVF[2] = EX_TO_DOUBLE(newIntPosVM(2,0));
-	simSetObjectPosition(quadcopterH, -1, newIntPosVF);
+	simSetObjectPosition(quadcopterH, -1, newPosVF);
 
 	// debug: off motors
 	inputs.fz = 0;
@@ -697,12 +649,25 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	flatOut[2] = z;
 	flatOut[3] = yaw;
 
+	// DEBUG
+	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
+		flatOut[2] << ", " << flatOut[3] << endl;
+	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
+		flatOut1[2] << ", " << flatOut1[3] << endl;
+	cout << "flatOut2: " << flatOut2[0] << ", " << flatOut2[1] << ", " <<
+		flatOut2[2] << ", " << flatOut2[3] << endl;
+	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
+		flatOut3[2] << ", " << flatOut3[3] << endl;
+	cout << "flatOut4: " << flatOut4[0] << ", " << flatOut4[1] << ", " <<
+		flatOut4[2] << ", " << flatOut4[3] << endl;
+
+
 	// Get the state of the quadrotor
 	flatOutputs2state(state);
 	flatOutputs2inputs(inputs);
 
 	// TODO: delete this
-	debugging(inputs, state, x, y, z, a, b, g);
+	//debugging(inputs, state, x, y, z, a, b, g);
 }
 
 
