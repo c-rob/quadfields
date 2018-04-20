@@ -14,7 +14,9 @@ LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 // GinaC settings
 bool cln::cl_inhibit_floating_point_underflow = true;
 
-// Plugin global variables
+/***
+ * Globals
+ ***/
 int quadcopterH = -1;
 unsigned nVars = 0;					// The number of lines in the vector field file
 
@@ -23,20 +25,27 @@ float mass = 0;
 matrix J_inertia = {{1,0,0},{0,1,0},{0,0,1}};
 
 
-// 	The flat output derivatives 
-ex flatOut[4];			// numeric values in the current iteration
-ex flatOut1[4];
+/***
+ * Numeric quantities in the current iteration
+ ***/
+ex flatOut[4];			// measured flat outputs
+ex flatOut1[4];			// computed derivatives:
 ex flatOut2[4];
 ex flatOut3[4];
 ex flatOut4[4];
-
 
 // State vector; saved in vrep conventions (angles and frames)
 struct State {
 	double x, y, z, vx, vy, vz, a, b, g, p, q, r;
 };
 
-// Symbolic equations
+
+/***
+ * Symbolic equation, computed at initialization
+ ***/
+symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the variables (flat outputs)
+symbol St("t"); 		// Time is implicit in all variables
+
 struct {
 	ex phi;
 	ex theta;
@@ -51,21 +60,26 @@ struct {
 	ex u_thrust;
 } equations;
 
-symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the variables
-symbol St("t"); 		// Time is implicit in all variables
-matrix flatOut_D1;		// symbolic flat output derivatives vectors
+matrix flatOut_D1;		// vectors of symbolic flat output derivatives
 matrix flatOut_D2;
 matrix flatOut_D3;
 matrix flatOut_D4;
 
+
+
 // Debug symbols to delete
 ex part1;
 ex R, d_R, dd_R, d_sR;
+ex intVel, intAcc, intJerk;
+
+
+/*
+ * Code starts
+ */
 
 // forward declaration
 void updateState(Inputs &inputs, State &state, double x, double y, double z,
         double a, double b, double g);
-
 
 /*
  Declare symbolic functions for Ginac authomatic differentiation
@@ -474,9 +488,15 @@ void setVrepInitialState(void) {
 	cout << "Dorient " << Dabg[0] << ", " << Dabg[1] << ", " << Dabg[2] << endl;
 
 	// debug
-	cout << "d_R: " << d_R.evalf() << endl << endl;
-	cout << "d_sR: " << d_sR.evalf() << endl;
-	cout << "part1: " << part1.evalf() << endl;
+	intVel = vectorVrepTransform(matrix({{state.vx}, {state.vy}, {state.vz}}));
+	intAcc = matrix({{flatOut2[0]},{flatOut2[1]},{flatOut2[2]}});
+	intJerk = matrix({{flatOut3[0]},{flatOut3[1]},{flatOut3[2]}});
+	cout << "intVel (paper): " << intVel << endl;
+	cout << "intAcc (paper): " << intAcc << endl;
+	cout << "intJerk (paper): " << intJerk << endl;
+	//cout << "d_R: " << d_R.evalf() << endl << endl;
+	//cout << "d_sR: " << d_sR.evalf() << endl;
+	//cout << "part1: " << part1.evalf() << endl;
 }
 
 
@@ -534,7 +554,112 @@ int initField(string fieldFilePath) {
     // Assigns initial config in vrep scene to match the vector field
     setVrepInitialState();
 
+	// debug
+	cout << "d1: " << flatOut_D1 << endl;
+	cout << "d2: " << flatOut_D2 << endl;
+	cout << "d3: " << flatOut_D3 << endl;
+	cout << "d4: " << flatOut_D4 << endl;
+
 	return true;
+}
+
+
+void debugging(Inputs &inputs, State &state, double x, double y, double z,
+        double a, double b, double g) {
+	// Now checking flat outputs are consistent (first two at least)
+	
+	// DEBUG
+	/*
+	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
+		flatOut[2] << ", " << flatOut[3] << endl;
+	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
+		flatOut1[2] << ", " << flatOut1[3] << endl;
+	cout << "flatOut2: " << flatOut2[0] << ", " << flatOut2[1] << ", " <<
+		flatOut2[2] << ", " << flatOut2[3] << endl;
+	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
+		flatOut3[2] << ", " << flatOut3[3] << endl;
+	*/
+
+	// state
+	matrix pos = {{x}, {y}, {z}};
+	matrix velV = {{state.vx},{state.vy},{state.vz}};
+	matrix vel = vectorVrepTransform(velV);
+	matrix acc = {{flatOut2[0]},{flatOut2[1]},{flatOut2[2]}};
+	matrix jerk = {{flatOut3[0]},{flatOut3[1]},{flatOut3[2]}};
+	matrix snap = {{flatOut4[0]},{flatOut4[1]},{flatOut4[2]}};
+
+	// integrate velocities
+	/*
+	ex newPos = pos + 0.01 * vel;
+	matrix newPosM = ex_to<matrix>(newPos.evalm());
+	matrix newPosVM = vectorVrepTransform(newPosM);
+	float newPosVF[3];
+	newPosVF[0] = EX_TO_DOUBLE(newPosVM(0,0));
+	newPosVF[1] = EX_TO_DOUBLE(newPosVM(1,0));
+	newPosVF[2] = EX_TO_DOUBLE(newPosVM(2,0));
+	float abg[] = {(float)state.a, (float)state.b, (float)state.g};
+	simSetObjectOrientation(quadcopterH, -1, abg);
+	*/
+
+	// integrate acceleration
+	/*
+	intVel = (intVel + 0.01*acc).evalm();
+	cout << "vel (integrated): " << intVel << endl;
+	cout << "vel (from field): " << vel << endl;
+	ex newIntPos = pos + 0.01 * intVel + 0.01*0.01*0.5*acc;
+	matrix newIntPosM = ex_to<matrix>(newIntPos.evalm());
+	matrix newIntPosVM = vectorVrepTransform(newIntPosM);
+	float newIntPosVF[3];
+	newIntPosVF[0] = EX_TO_DOUBLE(newIntPosVM(0,0));
+	newIntPosVF[1] = EX_TO_DOUBLE(newIntPosVM(1,0));
+	newIntPosVF[2] = EX_TO_DOUBLE(newIntPosVM(2,0));
+	simSetObjectPosition(quadcopterH, -1, newIntPosVF);
+	*/
+
+	// integrate jerk
+	/*
+	intAcc = (intAcc + 0.01*jerk).evalm();
+	intVel = (intVel + 0.01 * intAcc + 0.01*0.01*0.5*jerk).evalm();
+	cout << "vel (integrated): " << intVel << endl;
+	cout << "vel (from field): " << vel << endl;
+	cout << "acc (integrated): " << intAcc << endl;
+	cout << "acc (diff field): " << acc << endl << endl;
+	ex newIntPos = pos + 0.01*intVel + 0.01*0.01*intAcc/2 + 0.01*0.01*0.01 * jerk/6;
+	matrix newIntPosM = ex_to<matrix>(newIntPos.evalm());
+	matrix newIntPosVM = vectorVrepTransform(newIntPosM);
+	float newIntPosVF[3];
+	newIntPosVF[0] = EX_TO_DOUBLE(newIntPosVM(0,0));
+	newIntPosVF[1] = EX_TO_DOUBLE(newIntPosVM(1,0));
+	newIntPosVF[2] = EX_TO_DOUBLE(newIntPosVM(2,0));
+	simSetObjectPosition(quadcopterH, -1, newIntPosVF);
+	*/
+	
+	// integrate snap
+	intJerk = (intJerk + 0.01*snap).evalm();
+	intAcc = (intAcc + 0.01 * intJerk + 0.01*0.01*0.5*snap).evalm();
+	intVel = (intVel + 0.01 * intAcc + 0.01*0.01*0.5*intJerk + 
+			0.01*0.01*0.01*intJerk/6).evalm();
+	cout << "vel (integrated): " << intVel << endl;
+	cout << "vel (from field): " << vel << endl;
+	cout << "acc (integrated): " << intAcc << endl;
+	cout << "acc (diff field): " << acc << endl << endl;
+	cout << "jerk (integrated): " << intJerk << endl;
+	cout << "jerk (diff field): " << jerk << endl << endl;
+	ex newIntPos = pos + 0.01*intVel + 0.01*0.01*intAcc/2 + 0.01*0.01*0.01 * intJerk/6 + 
+		0.01*0.01*0.01*0.01*snap/24;
+	matrix newIntPosM = ex_to<matrix>(newIntPos.evalm());
+	matrix newIntPosVM = vectorVrepTransform(newIntPosM);
+	float newIntPosVF[3];
+	newIntPosVF[0] = EX_TO_DOUBLE(newIntPosVM(0,0));
+	newIntPosVF[1] = EX_TO_DOUBLE(newIntPosVM(1,0));
+	newIntPosVF[2] = EX_TO_DOUBLE(newIntPosVM(2,0));
+	simSetObjectPosition(quadcopterH, -1, newIntPosVF);
+
+	// debug: off motors
+	inputs.fz = 0;
+	inputs.tx = 0;
+	inputs.ty = 0;
+	inputs.tz = 0;
 }
 
 
@@ -576,42 +701,10 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	flatOutputs2state(state);
 	flatOutputs2inputs(inputs);
 
-	// DEBUG
-	/*
-	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
-		flatOut[2] << ", " << flatOut[3] << endl;
-	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
-		flatOut1[2] << ", " << flatOut1[3] << endl;
-	cout << "flatOut2: " << flatOut2[0] << ", " << flatOut2[1] << ", " <<
-		flatOut2[2] << ", " << flatOut2[3] << endl;
-	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
-		flatOut3[2] << ", " << flatOut3[3] << endl;
-	*/
-
-	// debug: set velocities
-	matrix testPos = {{x}, {y}, {z}};
-	matrix testVel = {{state.vx},{state.vy},{state.vz}};
-	cout << "pos (paper): " << testPos << endl;
-	cout << "vel (vrep): " << testVel  << endl;
-
-	matrix testPosP = {{x}, {-y}, {-z}};
-	ex newPos = testPosP + 0.01 * testVel;
-	matrix newPosM = ex_to<matrix>(newPos.evalm());
-	float newPosF[3];
-	newPosF[0] = EX_TO_DOUBLE(newPosM(0,0));
-	newPosF[1] = EX_TO_DOUBLE(newPosM(1,0));
-	newPosF[2] = EX_TO_DOUBLE(newPosM(2,0));
-	simSetObjectPosition(quadcopterH, -1, newPosF);
-
-
-	// debug: off motors
-	inputs.fz = 0;
-	inputs.tx = 0;
-	inputs.ty = 0;
-	inputs.tz = 0;
-
-	// TODO: reenable dynamic quadcopterH
+	// TODO: delete this
+	debugging(inputs, state, x, y, z, a, b, g);
 }
+
 
 
 

@@ -18,7 +18,7 @@ INCLUDESDIR=-I./vrep/include/ -I./vrep/include/stack/
 .PHONY: mkexe mklib clean install
 
 install: mklib
-	cp $(DESTLIB) $(VREPDIR)/
+	install $(DESTLIB) $(VREPDIR)/
 
 mkexe: $(DESTEXE)
 
