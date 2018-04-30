@@ -2,17 +2,24 @@
 
 #include "libv_repExtSymDeriv.hpp"
 
+
+// #define DEBUG
+#define DEBUG_PRINT
+#define DEBUG_PRINT_FLAT_OUTPUTS
+
+
 #define CONCAT(x,y,z) x y z
 #define strConCat(x,y,z)    CONCAT(x,y,z)
-#define EX_TO_DOUBLE(x)	GiNaC::ex_to<numeric>(x).to_double();
+#define EX_TO_DOUBLE(x)	GiNaC::ex_to<numeric>(x).to_double()
 
 using namespace GiNaC;
 using namespace std;
 
+
 LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 
 // GinaC settings
-bool cln::cl_inhibit_floating_point_underflow = true;
+bool cln::cl_inhibit_floating_point_underflow = true; // no underflow exception
 
 /***
  * Globals
@@ -58,6 +65,8 @@ struct {
 	matrix d_omega;
 	matrix u_torque;
 	ex u_thrust;
+
+	matrix R;			// debug
 } equations;
 
 matrix flatOut_D1;		// vectors of symbolic flat output derivatives
@@ -68,9 +77,11 @@ matrix flatOut_D4;
 
 
 // Debug symbols to delete
-ex part1;
 ex R, d_R, dd_R, d_sR;
-ex intVel;
+ex intVel = matrix(3, 1);
+ex intAbg = matrix(3, 1);
+ex intRpy = matrix(3, 1);
+ex abgLast = matrix(3, 1);
 
 
 /*
@@ -122,7 +133,7 @@ static ex eval_symF(const ex &var, const ex &nDiff, const ex &t) {
 
 
 static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
-	// Warning: flat outputs must be evaluated first
+	// NOTE: flat outputs must be evaluated before any .evalf()!
 
 	unsigned index = 0;
 	if (var.is_equal(Sx)) index = 0;
@@ -200,7 +211,7 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 		}
 
 		// call
-		ret = initField(fileName);
+		ret = initField(fileName, true);
     }
     D.pushOutData(CScriptFunctionDataItem(ret));
     D.writeDataToStack(cb->stackID);
@@ -243,8 +254,12 @@ matrix vectorVrepTransform(const matrix& vec) {
 }
 
 
-matrix rpy2matrix(const ex r, const ex p, const ex y) {
+matrix rpy2matrix(matrix rpy) {
 	// [r,p,y] = [phi,theta,psi]
+	
+	ex r = rpy(0,0);
+	ex p = rpy(1,0);
+	ex y = rpy(2,0);
 
 	matrix Rz = {{cos(y), -sin(y), 0}, {sin(y), cos(y), 0}, {0, 0, 1}};
 	matrix Ry = {{cos(p), 0, sin(p)}, {0, 1, 0}, {-sin(p), 0, cos(p)}};
@@ -254,14 +269,18 @@ matrix rpy2matrix(const ex r, const ex p, const ex y) {
 }
 
 
-matrix abg2matrix(const ex a, const ex b, const ex g) {
+matrix abg2matrix(matrix abg) {
 	// [a,b,g] = [alpha,beta,gamma]
+
+	ex a = abg(0,0);
+	ex b = abg(1,0);
+	ex g = abg(2,0);
 
 	matrix Rz = {{cos(g), -sin(g), 0}, {sin(g), cos(g), 0}, {0, 0, 1}};
 	matrix Ry = {{cos(b), 0, sin(b)}, {0, 1, 0}, {-sin(b), 0, cos(b)}};
 	matrix Rx = {{1, 0, 0}, {0, cos(a), -sin(a)}, {0, sin(a), cos(a)}};
 
-	// Debug: Should I take the inverted axis into account?
+	// NOTE: Should I take the inverted axis into account?
 	matrix Ryi = Ry.transpose();
 	matrix Rzi = Rz.transpose();
 
@@ -284,12 +303,7 @@ matrix matrix2rpy(matrix m) {
 matrix matrix2abg(matrix m) {
 	// [a,b,g] = [alpha,beta,gamma]
 
-	// Debug: Should I take the inverted axis into account?
-	/*
-	ex a = atan2(-m(1,2), m(2,2));
-	ex b = atan2(m(0,2), sqrt(m(1,2)*m(1,2) + m(2,2)*m(2,2)));
-	ex g = atan2(-m(0,1), m(0,0));
-	*/
+	// NOTE: Opposite b,g: should I take the inverted axis into account?
 	ex a = atan2(-m(1,2), m(2,2));
 	ex b = atan2(-m(0,2), sqrt(m(1,2)*m(1,2) + m(2,2)*m(2,2)));
 	ex g = atan2(m(0,1), m(0,0));
@@ -298,20 +312,18 @@ matrix matrix2abg(matrix m) {
 }
 
 
-void angvel2abg(float Dabg[], const double p, const double q, const double r,
-		const double a, const double b, const double g) {
+matrix angvel2abg(matrix angVel, matrix abg) {
 
 	// NOTE: singularity at cos(b)=0
+	
+	ex a = abg(0,0);
+	ex b = abg(1,0);
 
-	matrix pqr = {{p}, {q}, {r}};
 	matrix T = {{ 1, (sin(a)*sin(b))/cos(b), -(cos(a)*sin(b))/cos(b)},
 		{ 0, cos(a), sin(a)},
 		{ 0, -sin(a)/cos(b),  cos(a)/cos(b)}};
-	matrix Dabg_m = T.mul(pqr);
 
-	Dabg[0] = (float)EX_TO_DOUBLE(Dabg_m(0,0));
-	Dabg[1] = (float)EX_TO_DOUBLE(Dabg_m(1,0));
-	Dabg[2] = (float)EX_TO_DOUBLE(Dabg_m(2,0));
+	return  T.mul(angVel);
 }
 
 
@@ -367,7 +379,7 @@ void flatOutputs2state(State &state) {
 	state.vz = EX_TO_DOUBLE(vTemp(2,0));
 
         // This must be compared to the dummy object in vrep scene (paper axis convention)
-	matrix abg = matrix2abg(rpy2matrix(phi, theta, psi));
+	matrix abg = matrix2abg(rpy2matrix(matrix({{phi}, {theta}, {psi}})));
 	state.a = EX_TO_DOUBLE(ex_to<matrix>(abg)(0,0));
 	state.b = EX_TO_DOUBLE(ex_to<matrix>(abg)(1,0));
 	state.g = EX_TO_DOUBLE(ex_to<matrix>(abg)(2,0));
@@ -377,16 +389,6 @@ void flatOutputs2state(State &state) {
 	state.q = EX_TO_DOUBLE(ex_to<matrix>(vTemp)(1,0));
 	state.r = EX_TO_DOUBLE(ex_to<matrix>(vTemp)(2,0));
 
-	// Debug
-    /*
-	cout << "state: " << state.x << ", " << state.y << ", " << state.z << "; "
-	 	<< state.vx << ", " << state.vy << ", " << state.vz << "; "
-	 	<< state.a << ", " << state.b << ", " << state.g << "; "
-	 	<< state.p << ", " << state.q << ", " << state.r << endl;
-    */
-	cout << "phi: " << phi << endl;
-	cout << "theta: " << theta << endl;
-	cout << "psi: " << psi << endl;
 }
 
 
@@ -445,14 +447,7 @@ void genSymbolicEquations(void) {
 
 	// Second equation for torque using derivatives of rotation matrices
 	// Debug
-	matrix R = rpy2matrix(equations.phi, equations.theta, equations.psi);
-	d_R = R.diff(St);
-	d_sR = skewOmega.mul(R);
-
-	dd_R = R.diff(St);
-	part1 = ex_to<matrix>(d_R).transpose() * d_R + R.transpose() * dd_R;
-	part1 = part1.evalm();
-		// mul J to the left
+	equations.R = rpy2matrix(matrix({{equations.phi},{equations.theta},{equations.psi}}));
 	// end debug
 	
 	// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - 9.8 * [0;0;1])
@@ -478,7 +473,7 @@ void setVrepInitialState(void) {
     Inputs inputs;
     State state;
     updateState(inputs, state, initPos[0], initPos[1], initPos[2], 0, 0, 0);
-        // NOTE: arg 8 is the 4-th flat output. 6-7 args are not needed
+        // NOTE: arg 8 is the 4-th flat output, set to 0 here. 6-7 args are not needed
 	
 	// Set other properties
 	const float abg[] = {(float)state.a, (float)state.b, (float)state.g};
@@ -488,27 +483,27 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_y, (float)state.vy);
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_z, (float)state.vz);
 
-	float Dabg[3];
-	angvel2abg(Dabg, state.p, state.q, state.r, state.a, state.b, state.g);
-	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a, Dabg[0]);
-	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, Dabg[1]);
-	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, Dabg[2]);
+	matrix abgD1 = angvel2abg(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}}));
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a, EX_TO_DOUBLE(abgD1(0,0)));
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, EX_TO_DOUBLE(abgD1(1,0)));
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, EX_TO_DOUBLE(abgD1(2,0)));
 
-
+#ifdef DEBUG_PRINT
 	cout << "initPos " << initPos[0] << ", " << initPos[1] << ", " << initPos[2] << endl;
 	cout << "initVel " << state.vx << ", " << state.vy << ", " << state.vz << endl;
 	cout << "orient " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
-	cout << "Dorient " << Dabg[0] << ", " << Dabg[1] << ", " << Dabg[2] << endl;
+	cout << "Dorient " << abgD1 << endl;
+#endif
 
-	// debug
+#ifdef DEBUG
 	intVel = vectorVrepTransform(matrix({{state.vx}, {state.vy}, {state.vz}}));
-	//cout << "d_R: " << d_R.evalf() << endl << endl;
-	//cout << "d_sR: " << d_sR.evalf() << endl;
-	//cout << "part1: " << part1.evalf() << endl;
+	intAbg = matrix({{abg[0]},{abg[1]},{abg[2]}});
+	intRpy = matrix(3,1); // assuming start from horizontal
+#endif
 }
 
 
-int initField(string fieldFilePath) {
+int initField(string fieldFilePath, bool vrepCaller) {
 
 	string line;
 	ifstream vectFile;
@@ -560,7 +555,9 @@ int initField(string fieldFilePath) {
 	genSymbolicEquations();
 
     // Assigns initial config in vrep scene to match the vector field
-    setVrepInitialState();
+	if (vrepCaller) {
+		setVrepInitialState();
+	}
 
 	return true;
 }
@@ -576,6 +573,9 @@ void debugging(Inputs &inputs, State &state, double x, double y, double z,
 	matrix acc = {{flatOut2[0]},{flatOut2[1]},{flatOut2[2]}};
 	matrix jerk = {{flatOut3[0]},{flatOut3[1]},{flatOut3[2]}};
 	matrix snap = {{flatOut4[0]},{flatOut4[1]},{flatOut4[2]}};
+	matrix abg = {{state.a}, {state.b}, {state.g}};
+	matrix pqr = {{state.p}, {state.q}, {state.r}};
+	matrix vrepAbg = {{a}, {b}, {g}};
 
 	// integrate velocities
 	ex newPos = pos + 0.01 * vel;
@@ -586,26 +586,25 @@ void debugging(Inputs &inputs, State &state, double x, double y, double z,
 	newPosVF[1] = EX_TO_DOUBLE(newPosVM(1,0));
 	newPosVF[2] = EX_TO_DOUBLE(newPosVM(2,0));
 
-	float abg[] = {(float)state.a, (float)state.b, (float)state.g};
-	cout << "abg: " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
-	matrix orientation = abg2matrix(abg[0], abg[1], abg[2]);
-	float matr[12];
-	matr[0] = EX_TO_DOUBLE(orientation(0,0));
-	matr[1] = EX_TO_DOUBLE(orientation(0,1));
-	matr[2] = EX_TO_DOUBLE(orientation(0,2));
-	matr[3] = newPosVF[0];
-	matr[4] = EX_TO_DOUBLE(orientation(1,0));
-	matr[5] = EX_TO_DOUBLE(orientation(1,1));
-	matr[6] = EX_TO_DOUBLE(orientation(1,2));
-	matr[7] = newPosVF[1];
-	matr[8] = EX_TO_DOUBLE(orientation(2,0));
-	matr[9] = EX_TO_DOUBLE(orientation(2,1));
-	matr[10] = EX_TO_DOUBLE(orientation(2,2));
-	matr[11] = newPosVF[2];
+	// integrate deriv rpy
+	matrix dRpy = {{(equations.d_phi.evalf())},
+		{(equations.d_theta.evalf())},
+		{(equations.d_psi.evalf())}};
+	cout << "dRpy " << dRpy << endl;
+	intRpy = (intRpy + 0.01 * dRpy).evalm();
+	cout << "intRpy " << intRpy << endl;
+	matrix intAbg = matrix2abg(rpy2matrix(ex_to<matrix>(intRpy)));
+	
 
-	//simSetObjectMatrix(quadcopterH, -1, matr);
-	simSetObjectOrientation(quadcopterH, -1, abg);
+	float abgF[3];
+	abgF[0] = EX_TO_DOUBLE(abg(0,0));
+	abgF[1] = EX_TO_DOUBLE(abg(1,0));
+	abgF[2] = EX_TO_DOUBLE(abg(2,0));
+	simSetObjectOrientation(quadcopterH, -1, abgF);
 	simSetObjectPosition(quadcopterH, -1, newPosVF);
+
+	cout << "int.abg:   " << intAbg << endl;;
+	cout << "state.abg: " << abg << endl << endl;
 
 	// debug: off motors
 	inputs.fz = 0;
@@ -625,7 +624,7 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	y = EX_TO_DOUBLE(vTemp(1,0));
 	z = EX_TO_DOUBLE(vTemp(2,0));
 
-    matrix rpy = matrix2rpy(abg2matrix(a, b, g));
+    matrix rpy = matrix2rpy(abg2matrix(matrix({{a}, {b}, {g}})));
 	double yaw = EX_TO_DOUBLE(rpy(2,0));
 
 	// Evaluate the D4 vectors numerically
@@ -649,7 +648,8 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	flatOut[2] = z;
 	flatOut[3] = yaw;
 
-	// DEBUG
+#ifdef DEBUG_PRINT_FLAT_OUTPUTS
+	// Deb_print
 	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
 		flatOut[2] << ", " << flatOut[3] << endl;
 	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
@@ -660,14 +660,16 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 		flatOut3[2] << ", " << flatOut3[3] << endl;
 	cout << "flatOut4: " << flatOut4[0] << ", " << flatOut4[1] << ", " <<
 		flatOut4[2] << ", " << flatOut4[3] << endl;
+#endif
 
 
 	// Get the state of the quadrotor
 	flatOutputs2state(state);
 	flatOutputs2inputs(inputs);
 
-	// TODO: delete this
-	//debugging(inputs, state, x, y, z, a, b, g);
+#ifdef DEBUG
+	debugging(inputs, state, x, y, z, a, b, g);
+#endif
 }
 
 
@@ -857,17 +859,46 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 
 
 int main() {
+	
+	// init properties
+	mass = 0.87;
+	J_inertia.add(ex_to<matrix>(diag_matrix({0.006,0.006,0.012})));
 
-	// CLN setting of 0 exception
-	cln::cl_inhibit_floating_point_underflow = true;
+	initField("./vector-field.txt", false);
 
-	initField("/home/roberto/Desktop/Erob/V-REP/symsplugin/vector-field.txt");
-	/*
-	mass = 1;
+	// set a fictitious pose
+	Inputs inputs;
+	State state;
+	updateState(inputs, state, 1,0,1, 0,0,1);
 
-	Inputs inp;
-	*/
+	// Print initial state
+	matrix abg = {{state.a}, {state.b}, {state.g}};
+	matrix pqr = {{state.p}, {state.q}, {state.r}};
+	cout << "Init state:\n";
+	cout << "pos:  " << state.x << ", " << state.y << ", " << state.z << endl;
+	cout << "vel:  " << state.vx << ", " << state.vy << ", " << state.vz << endl;
+	cout << "abg:  " << state.a << ", " << state.b << ", " << state.g << endl;
+	cout << "pqr:  " << state.p << ", " << state.q << ", " << state.r << endl << endl;
 
+	// print some stuff
+	cout << "\n\nSymbolic\n";
+	cout << "phi:   " << equations.phi << endl;
+	cout << "th:    " << equations.theta << endl;
+	cout << "psi:   " << equations.psi << endl;
+	cout << "R:     " << equations.R << endl;
+	cout << "d_phi: " << equations.d_phi << endl;
+	cout << "d_th:  " << equations.d_theta << endl;
+	cout << "d_psi: " << equations.d_psi << endl;
+	cout << "omega: " << equations.omega << endl;
 
+	cout << "\n\nNumeric\n";
+	cout << "phi:   " << equations.phi.evalf() << endl;
+	cout << "th:    " << equations.theta.evalf() << endl;
+	cout << "psi:   " << equations.psi.evalf() << endl;
+	cout << "R:     " << equations.R.evalf() << endl;
+	cout << "d_phi: " << equations.d_phi.evalf() << endl;
+	cout << "d_th:  " << equations.d_theta.evalf() << endl;
+	cout << "d_psi: " << equations.d_psi.evalf() << endl;
+	cout << "omega: " << equations.omega.evalf() << endl;
 }
 

@@ -21,3 +21,5 @@ Dingjiang Zhou and Mac Schwager
 	* The plugin assumes that the quadrotor is a single dynamic shape
         in the vrep scene that is called "Quadrirotor".
 	* See "Field controller" scene for usage
+	* The plugin has been written for V-REP 3.4.0. A newer API might require
+		minor changes in the code.

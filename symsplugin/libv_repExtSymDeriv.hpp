@@ -10,6 +10,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <cmath>
 #include <cln/cln.h>
 #include <ginac/ginac.h>
 #include "v_repLib.h"
@@ -46,7 +47,7 @@ struct Inputs {
 
 
 // custom commands
-int initField(std::string fieldFilePath);	// read vector field file equations
+int initField(std::string fieldFilePath, bool vrepCaller);	// read vector field file equations
 void updateState(Inputs &inputs, double x, double y, double z, double yaw);
 								// Eval symbolic equations
 
