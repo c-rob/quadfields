@@ -15,14 +15,32 @@ DESTLIB=libv_repExtSymDeriv.so
 OBJECTS=$(SOURCES:.cpp=.o)
 INCLUDESDIR=-I./vrep/include/ -I./vrep/include/stack/
 
+
+# Debug settings
+$(DESTEXE): CXXFLAGS=-x c++ -std=c++11 -Wall -Wextra -Wno-unused-parameter -O0 -g
+
 .PHONY: mkexe mklib clean install
+
+# Do stuff
 
 install: mklib
 	install $(DESTLIB) $(VREPDIR)/
 
-mkexe: $(DESTEXE)
+# Clean if changing compiler options
+mkexe:
+ifneq ("$(wildcard $(DESTLIB))","")
+	$(MAKE) clean $(DESTEXE)
+else
+	$(MAKE) $(DESTEXE)
+endif
 
-mklib: $(DESTLIB)
+mklib:
+ifneq ("$(wildcard $(DESTEXE))","")
+	$(MAKE) clean $(DESTLIB)
+else
+	$(MAKE) $(DESTLIB)
+endif
+
 
 $(DESTEXE): $(OBJECTS)
 	$(CXX) -o $(DESTEXE) $(OBJECTS) $(LDFLAGS)
