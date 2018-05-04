@@ -4,8 +4,8 @@
 
 
 // #define DEBUG
-#define DEBUG_PRINT
-#define DEBUG_PRINT_FLAT_OUTPUTS
+// #define DEBUG_PRINT
+// #define DEBUG_PRINT_FLAT_OUTPUTS
 
 
 #define CONCAT(x,y,z) x y z
@@ -54,19 +54,19 @@ symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the variables (flat outputs)
 symbol St("t"); 		// Time is implicit in all variables
 
 struct {
-	ex phi;
-	ex theta;
-	ex psi;
-	ex d_phi;
-	ex d_theta;
-	ex d_psi;
-	matrix T;
-	matrix omega;
-	matrix d_omega;
-	matrix u_torque;
-	ex u_thrust;
+	ex phi;				// Rotation about x
+	ex theta;			// Rotation about y
+	ex psi;				// Rotation about z
+	ex d_phi;			// ^ deriv
+	ex d_theta; 		// ^ deriv
+	ex d_psi;   		// ^ deriv
+	matrix omega;		// Angular vel in body frame
+	matrix d_omega;		// ^ deriv
+	matrix u_torque;	// Control input: torque in x,y,z
+	ex u_thrust;		// Control input: thrust
 
-	matrix R;			// debug
+	matrix R;
+	matrix d_R;
 } equations;
 
 matrix flatOut_D1;		// vectors of symbolic flat output derivatives
@@ -77,7 +77,6 @@ matrix flatOut_D4;
 
 
 // Debug symbols to delete
-ex R, d_R, dd_R, d_sR;
 ex intVel = matrix(3, 1);
 ex intAbg = matrix(3, 1);
 ex intRpy = matrix(3, 1);
@@ -312,18 +311,53 @@ matrix matrix2abg(matrix m) {
 }
 
 
-matrix angvel2abg(matrix angVel, matrix abg) {
+matrix omega2rpyRate(matrix angVel, matrix rpy) {
 
-	// NOTE: singularity at cos(b)=0
-	
-	ex a = abg(0,0);
-	ex b = abg(1,0);
+	matrix TInv = {
+		{ 1, (sin(rpy(0,0))*sin(rpy(1,0)))/cos(rpy(1,0)), (cos(rpy(0,0))*sin(rpy(1,0)))/cos(rpy(1,0))},
+		{ 0, cos(rpy(0,0)), -sin(rpy(0,0))},
+		{ 0, sin(rpy(0,0))/cos(rpy(1,0)), cos(rpy(0,0))/cos(rpy(1,0))}};
 
-	matrix T = {{ 1, (sin(a)*sin(b))/cos(b), -(cos(a)*sin(b))/cos(b)},
-		{ 0, cos(a), sin(a)},
-		{ 0, -sin(a)/cos(b),  cos(a)/cos(b)}};
+	return TInv.mul(angVel);
+}
 
-	return  T.mul(angVel);
+
+matrix rpyRate2omega(matrix rpyRate, matrix rpy) {
+
+	matrix T = {
+		{ 1, 0, -sin(rpy(1,0))},
+		{ 0, cos(rpy(0,0)), cos(rpy(1,0))*sin(rpy(0,0))},
+		{ 0, -sin(rpy(0,0)), cos(rpy(0,0))*cos(rpy(1,0))}};
+
+	return T.mul(rpyRate);
+}
+
+
+matrix omega2abgRate(matrix angVelVrep, matrix abg) {
+
+	// NOTE: changing reference is enough?
+	matrix angVel = vectorVrepTransform(angVelVrep);
+
+	matrix TInv = {
+		{ cos(abg(2,0))/cos(abg(1,0)), -sin(abg(2,0))/cos(abg(1,0)), 0},
+		{ sin(abg(2,0)), cos(abg(2,0)), 0},
+		{ -(cos(abg(2,0))*sin(abg(1,0)))/cos(abg(1,0)), (sin(abg(1,0))*sin(abg(2,0)))/cos(abg(1,0)), 1}};
+
+	return TInv.mul(angVel);
+}
+
+
+matrix abgRate2omega(matrix abgRate, matrix abg) {
+
+	matrix T = {
+		{ cos(abg(1,0))*cos(abg(2,0)), sin(abg(2,0)), 0},
+		{ -cos(abg(1,0))*sin(abg(2,0)), cos(abg(2,0)), 0},
+		{ sin(abg(1,0)), 0, 1}};
+
+	matrix omegaVrep = T.mul(abgRate);
+
+	// NOTE: changing reference is enough?
+	return vectorVrepTransform(omegaVrep);
 }
 
 
@@ -420,22 +454,15 @@ void genSymbolicEquations(void) {
 	equations.d_theta = equations.theta.diff(St);
 	equations.d_psi = equations.psi.diff(St);
 
-	// Euler rates rpy to angular velocity
-	equations.T = {
-		{ 0, -sin(equations.phi), cos(equations.phi)*cos(equations.theta) },
-		{ 0, cos(equations.phi), cos(equations.theta)*sin(equations.phi) },
-		{ 1, 0, -sin(equations.theta)}
-	};
- 
-	ex temp_omega = equations.T * matrix({{equations.d_phi},
-			{equations.d_theta}, {equations.d_psi}});
-	ex temp_d_omega = temp_omega.diff(St);
+	// Euler rates rpy to angular velocity (remeber: the result is omega in local frame)
+	equations.omega = rpyRate2omega(matrix({{equations.d_phi},{equations.d_theta},{equations.d_psi}}),
+			matrix({{equations.phi},{equations.theta},{equations.psi}}));
 
-	equations.omega = ex_to<matrix>(temp_omega.evalm());
+	ex temp_d_omega = equations.omega.diff(St);
 	equations.d_omega = ex_to<matrix>(temp_d_omega.evalm());
 
 
-	// omega = [0, −r, q; r, 0, −p; −q, p, 0]
+	// omega = [0, −r, q; r, 0, −p; −q, p, 0]  (in local frame too)
 	matrix skewOmega = {{0, -equations.omega(2,0), equations.omega(1,0)},
 						{equations.omega(2,0), 0, -equations.omega(0,0)},
 						{-equations.omega(1,0), equations.omega(0,0), 0}};
@@ -445,11 +472,6 @@ void genSymbolicEquations(void) {
 	ex temp_u_torque = J_inertia * equations.d_omega + skewOmega * J_inertia * equations.omega;
 	equations.u_torque = ex_to<matrix>(temp_u_torque.evalm());
 
-	// Second equation for torque using derivatives of rotation matrices
-	// Debug
-	equations.R = rpy2matrix(matrix({{equations.phi},{equations.theta},{equations.psi}}));
-	// end debug
-	
 	// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - 9.8 * [0;0;1])
 	matrix xyz_D2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
 	ex flatOut_D2_sube = (xyz_D2 - matrix({{0},{0},{9.8}}));
@@ -458,6 +480,11 @@ void genSymbolicEquations(void) {
 	ex innerProd = flatOut_D2_subm.transpose() * flatOut_D2_subm;
 	matrix innerProdM = ex_to<matrix>(innerProd.evalm());
 	equations.u_thrust = mass * sqrt(innerProdM(0,0));
+
+	
+	// Additional equations useful for debugging
+	equations.R = rpy2matrix(matrix({{equations.phi},{equations.theta},{equations.psi}}));
+	equations.d_R = ex_to<matrix>(equations.R.diff(St));
 }
 
 
@@ -483,7 +510,7 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_y, (float)state.vy);
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_z, (float)state.vz);
 
-	matrix abgD1 = angvel2abg(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}}));
+	matrix abgD1 = omega2abgRate(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}}));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a, EX_TO_DOUBLE(abgD1(0,0)));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, EX_TO_DOUBLE(abgD1(1,0)));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, EX_TO_DOUBLE(abgD1(2,0)));
@@ -880,25 +907,42 @@ int main() {
 	cout << "abg:  " << state.a << ", " << state.b << ", " << state.g << endl;
 	cout << "pqr:  " << state.p << ", " << state.q << ", " << state.r << endl << endl;
 
-	// print some stuff
-	cout << "\n\nSymbolic\n";
-	cout << "phi:   " << equations.phi << endl;
-	cout << "th:    " << equations.theta << endl;
-	cout << "psi:   " << equations.psi << endl;
-	cout << "R:     " << equations.R << endl;
-	cout << "d_phi: " << equations.d_phi << endl;
-	cout << "d_th:  " << equations.d_theta << endl;
-	cout << "d_psi: " << equations.d_psi << endl;
-	cout << "omega: " << equations.omega << endl;
+	// phi,th,psi,R,d_phi,d_th,d_psi equations are ok
+
+	// Evaluate all equations
+	matrix rpy = {{equations.phi.evalf()},{equations.theta.evalf()},{equations.psi.evalf()}};
+	matrix d_rpy = {{equations.d_phi.evalf()},{equations.d_theta.evalf()},{equations.d_psi.evalf()}};
+	ex omega = equations.omega.evalf();
+	ex d_omega = equations.d_omega.evalf();
+	ex R = equations.R.evalf();
+	ex d_R = equations.d_R.evalf();
+	ex Omega = (equations.d_R.evalf() * equations.R.transpose().evalf()).evalm();
 
 	cout << "\n\nNumeric\n";
-	cout << "phi:   " << equations.phi.evalf() << endl;
-	cout << "th:    " << equations.theta.evalf() << endl;
-	cout << "psi:   " << equations.psi.evalf() << endl;
-	cout << "R:     " << equations.R.evalf() << endl;
-	cout << "d_phi: " << equations.d_phi.evalf() << endl;
-	cout << "d_th:  " << equations.d_theta.evalf() << endl;
-	cout << "d_psi: " << equations.d_psi.evalf() << endl;
-	cout << "omega: " << equations.omega.evalf() << endl;
+	cout << "rpy:   " << rpy << endl;
+	cout << "d_rpy: " << d_rpy << endl;
+	cout << "omega: " << omega << endl;
+	cout << "d_omega: " << d_omega << endl;
+	cout << "R:     " << R << endl;
+	cout << "d_R:   " << d_R << endl;
+	cout << "Omega:     " << Omega << endl;
+
+	// Continue from here: T should be ok for rpy. Now for abg
+	
+	cout << "\nTesting the new functions:\n";
+	cout << "omega2rpyRate: " << omega2rpyRate(ex_to<matrix>(omega), rpy) << endl;
+	cout << "rpyRate2omega: " << rpyRate2omega(d_rpy, rpy) << endl;
+
+	// parameters are wrong here: just checking that the two functions are the opposite
+	cout << "omega2abgRate: " << omega2abgRate(ex_to<matrix>(omega), rpy) << endl;
+	cout << "abgRate2omega: " << rpyRate2omega(d_rpy, rpy) << endl;
+
+
+	// DEBUG !!
+	// 		+ Check equations.omega comparing with d_R * R.transpose()
+	// 		+ check we can differentiate angular velocities directly (theory)
+	// 		+ compare d_omega with its expression with diff rotation matrices
+	// 		+ if necessary compute omega and its derivatives with diff rot
+	//
 }
 
