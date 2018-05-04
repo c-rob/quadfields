@@ -916,7 +916,7 @@ int main() {
 	ex d_omega = equations.d_omega.evalf();
 	ex R = equations.R.evalf();
 	ex d_R = equations.d_R.evalf();
-	ex Omega = (equations.d_R.evalf() * equations.R.transpose().evalf()).evalm();
+	ex Omega = (equations.R.transpose().evalf() * equations.d_R.evalf()).evalm();
 
 	cout << "\n\nNumeric\n";
 	cout << "rpy:   " << rpy << endl;
@@ -926,16 +926,6 @@ int main() {
 	cout << "R:     " << R << endl;
 	cout << "d_R:   " << d_R << endl;
 	cout << "Omega:     " << Omega << endl;
-
-	// Continue from here: T should be ok for rpy. Now for abg
-	
-	cout << "\nTesting the new functions:\n";
-	cout << "omega2rpyRate: " << omega2rpyRate(ex_to<matrix>(omega), rpy) << endl;
-	cout << "rpyRate2omega: " << rpyRate2omega(d_rpy, rpy) << endl;
-
-	// parameters are wrong here: just checking that the two functions are the opposite
-	cout << "omega2abgRate: " << omega2abgRate(ex_to<matrix>(omega), rpy) << endl;
-	cout << "abgRate2omega: " << rpyRate2omega(d_rpy, rpy) << endl;
 
 
 	// DEBUG !!
