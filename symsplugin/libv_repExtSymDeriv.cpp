@@ -67,6 +67,7 @@ struct {
 
 	matrix R;
 	matrix d_R;
+	matrix dd_R;
 } equations;
 
 matrix flatOut_D1;		// vectors of symbolic flat output derivatives
@@ -485,6 +486,14 @@ void genSymbolicEquations(void) {
 	// Additional equations useful for debugging
 	equations.R = rpy2matrix(matrix({{equations.phi},{equations.theta},{equations.psi}}));
 	equations.d_R = ex_to<matrix>(equations.R.diff(St));
+	equations.dd_R = ex_to<matrix>(equations.d_R.diff(St));
+	
+	// These expressions for omega are equivalent
+	/*
+	matrix Omega = R.transpose().mul(d_R);
+	ex d_OmegaEx = d_R.transpose() * d_R + R.transpose() * dd_R;
+	matrix d_Omega = ex_to<matrix>(d_OmegaEx.evalm());
+	*/
 }
 
 
@@ -912,11 +921,14 @@ int main() {
 	// Evaluate all equations
 	matrix rpy = {{equations.phi.evalf()},{equations.theta.evalf()},{equations.psi.evalf()}};
 	matrix d_rpy = {{equations.d_phi.evalf()},{equations.d_theta.evalf()},{equations.d_psi.evalf()}};
-	ex omega = equations.omega.evalf();
-	ex d_omega = equations.d_omega.evalf();
-	ex R = equations.R.evalf();
-	ex d_R = equations.d_R.evalf();
-	ex Omega = (equations.R.transpose().evalf() * equations.d_R.evalf()).evalm();
+	matrix omega = ex_to<matrix>(equations.omega.evalf().evalm());
+	matrix d_omega = ex_to<matrix>(equations.d_omega.evalf().evalm());
+	matrix R = ex_to<matrix>(equations.R.evalf().evalm());
+	matrix d_R = ex_to<matrix>(equations.d_R.evalf().evalm());
+	matrix dd_R = ex_to<matrix>(equations.dd_R.evalf().evalm());
+	matrix Omega = R.transpose().mul(d_R);
+	ex d_OmegaEx = d_R.transpose() * d_R + R.transpose() * dd_R;
+	matrix d_Omega = ex_to<matrix>(d_OmegaEx.evalm());
 
 	cout << "\n\nNumeric\n";
 	cout << "rpy:   " << rpy << endl;
@@ -925,14 +937,7 @@ int main() {
 	cout << "d_omega: " << d_omega << endl;
 	cout << "R:     " << R << endl;
 	cout << "d_R:   " << d_R << endl;
+	cout << "dd_R:   " << dd_R << endl;
 	cout << "Omega:     " << Omega << endl;
-
-
-	// DEBUG !!
-	// 		+ Check equations.omega comparing with d_R * R.transpose()
-	// 		+ check we can differentiate angular velocities directly (theory)
-	// 		+ compare d_omega with its expression with diff rotation matrices
-	// 		+ if necessary compute omega and its derivatives with diff rot
-	//
+	cout << "d_Omega:   " << d_Omega << endl;
 }
-
