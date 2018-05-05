@@ -5,7 +5,7 @@
 
 // #define DEBUG
 // #define DEBUG_PRINT
-// #define DEBUG_PRINT_FLAT_OUTPUTS
+#define DEBUG_PRINT_FLAT_OUTPUTS
 
 
 #define CONCAT(x,y,z) x y z
@@ -30,6 +30,7 @@ unsigned nVars = 0;					// The number of lines in the vector field file
 // dynamic properties
 float mass = 0;
 matrix J_inertia = {{1,0,0},{0,1,0},{0,0,1}};
+const float GRAVITY_G = 9.80655;
 
 
 /***
@@ -46,6 +47,8 @@ struct State {
 	double x, y, z, vx, vy, vz, a, b, g, p, q, r;
 };
 
+// Input vecotor struct defined in header
+
 
 /***
  * Symbolic equation, computed at initialization
@@ -53,6 +56,7 @@ struct State {
 symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the variables (flat outputs)
 symbol St("t"); 		// Time is implicit in all variables
 
+// All these quantities are in rpy paper convention
 struct {
 	ex phi;				// Rotation about x
 	ex theta;			// Rotation about y
@@ -120,7 +124,9 @@ static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_p
 
 static ex eval_symF(const ex &var, const ex &nDiff, const ex &t) {
 
-	// TODO: is this an error? reference at 0 doesn't mean flatOut to 0
+	// NOTE: the first two ifs should never happen; not well tested.
+	// 	How to derive the last flat outputs if the field is unspecified for them?
+	
 	// Simplify symbolic equations if the vector field do not specifies z or yaw
 	if (var.is_equal(Sz) && nVars < 3 && nDiff > 0) {
 		return 0;
@@ -382,6 +388,8 @@ void genNextDerivative(const vector <symbol> vars, const matrix& src,
 
 void flatOutputs2state(State &state) {
 
+	// Compute numeric values for all equations regarding state quantities
+
 	// Endogenous transformation: state in paper, eq.8
 	// state: x, y, z, vx , vy , vz , psi, theta, phi, p, q, r
 
@@ -429,22 +437,27 @@ void flatOutputs2state(State &state) {
 
 void flatOutputs2inputs(Inputs &inputs) {
 
-	// substitute symbolic equations
-	ex u_torque_f = equations.u_torque.evalf();
+	// Compute numeric values for all input equations
 	
-	inputs.tx = EX_TO_DOUBLE(ex_to<matrix>(u_torque_f)(0,0));
-	inputs.ty = EX_TO_DOUBLE(ex_to<matrix>(u_torque_f)(1,0));
-	inputs.tz = EX_TO_DOUBLE(ex_to<matrix>(u_torque_f)(2,0));
-	inputs.fz = EX_TO_DOUBLE(equations.u_thrust.evalf());
+	matrix u_torqueF = ex_to<matrix>(equations.u_torque.evalf());
+	matrix u_torqueVrepF = vectorVrepTransform(u_torqueF);	// Convert into vrep convention
 
+	inputs.tx = EX_TO_DOUBLE(u_torqueVrepF(0,0));
+	inputs.ty = EX_TO_DOUBLE(u_torqueVrepF(1,0));
+	inputs.tz = EX_TO_DOUBLE(u_torqueVrepF(2,0));
+
+
+	ex u_thrustF = equations.u_thrust.evalf();
+	u_thrustF = (u_thrustF > 0) ? u_thrustF : 0;		// can't provide negative thrust
+	inputs.fz = EX_TO_DOUBLE(u_thrustF);
 }
 
 
 void genSymbolicEquations(void) {
 
-	// Euler angles and first derivative
+	// State equations first:
 	ex ba = -cos(symF(Syaw,0,St)) * symF(Sx,2,St) - sin(symF(Syaw,0,St)) * symF(Sy,2,St);
-	ex bb = -symF(Sz,2,St) + 9.8;
+	ex bb = -symF(Sz,2,St) + GRAVITY_G;
 	ex bc = -sin(symF(Syaw,0,St)) * symF(Sx,2,St) + cos(symF(Syaw,0,St)) * symF(Sy,2,St);
 
 	equations.phi = atan2(bc, sqrt(ba*ba + bb*bb));
@@ -455,7 +468,7 @@ void genSymbolicEquations(void) {
 	equations.d_theta = equations.theta.diff(St);
 	equations.d_psi = equations.psi.diff(St);
 
-	// Euler rates rpy to angular velocity (remeber: the result is omega in local frame)
+		// Euler rates rpy to angular velocity (remeber: the result is omega in local frame)
 	equations.omega = rpyRate2omega(matrix({{equations.d_phi},{equations.d_theta},{equations.d_psi}}),
 			matrix({{equations.phi},{equations.theta},{equations.psi}}));
 
@@ -468,31 +481,38 @@ void genSymbolicEquations(void) {
 						{equations.omega(2,0), 0, -equations.omega(0,0)},
 						{-equations.omega(1,0), equations.omega(0,0), 0}};
 
-	//equations.u_torque = J_inertia * equations.d_omega + skew(equations.omega)
-	//	* J_inertia * equations.omega;
+	// Inputs: torque
 	ex temp_u_torque = J_inertia * equations.d_omega + skewOmega * J_inertia * equations.omega;
 	equations.u_torque = ex_to<matrix>(temp_u_torque.evalm());
 
-	// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - 9.8 * [0;0;1])
-	matrix xyz_D2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
-	ex flatOut_D2_sube = (xyz_D2 - matrix({{0},{0},{9.8}}));
-	//ex flatOut_D2_sube = (xyz_D2); // NOTE: with or without gravity compensation?
-	matrix flatOut_D2_subm = ex_to<matrix>(flatOut_D2_sube.evalm());
-	ex innerProd = flatOut_D2_subm.transpose() * flatOut_D2_subm;
-	matrix innerProdM = ex_to<matrix>(innerProd.evalm());
-	equations.u_thrust = mass * sqrt(innerProdM(0,0));
+	// Inputs: thrust
+		// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - GRAVITY_G * [0;0;1])
+	matrix e3 = {{0},{0},{1}};
+	matrix xyzD2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
+	ex thrustAccVec = (xyzD2 - GRAVITY_G * e3);			// NOTE: with gravity compensation?
+	matrix thrustAccVecM = ex_to<matrix>(thrustAccVec.evalm());
+	ex thrustAccNorm = thrustAccVecM.transpose() * thrustAccVecM;		// norm of the acceleration vector
+	matrix tempMat = ex_to<matrix>(thrustAccNorm.evalm());
+	equations.u_thrust = mass * sqrt(tempMat(0,0));		// thrust absolute value
 
-	
-	// Additional equations useful for debugging
+
+	// Other useful, but unnecessary, equations
 	equations.R = rpy2matrix(matrix({{equations.phi},{equations.theta},{equations.psi}}));
 	equations.d_R = ex_to<matrix>(equations.R.diff(St));
 	equations.dd_R = ex_to<matrix>(equations.d_R.diff(St));
 	
-	// These expressions for omega are equivalent
+
+	// These are equivalent expressions for quantities already computed
 	/*
 	matrix Omega = R.transpose().mul(d_R);
+
 	ex d_OmegaEx = d_R.transpose() * d_R + R.transpose() * dd_R;
 	matrix d_Omega = ex_to<matrix>(d_OmegaEx.evalm());
+
+	matrix xyzD2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
+	ex thrustVec = equations.R.transpose() * mass * (GRAVITY_G * e3 - xyz_D2);
+	matrix fxVecM = ex_to<matrix>(thrustVec.evalm());
+	equations.u_thrust = fxVecM(2,0);				// NOTE: negative values are set to 0 in flatOutputs2inputs()
 	*/
 }
 
@@ -695,7 +715,7 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
 		flatOut3[2] << ", " << flatOut3[3] << endl;
 	cout << "flatOut4: " << flatOut4[0] << ", " << flatOut4[1] << ", " <<
-		flatOut4[2] << ", " << flatOut4[3] << endl;
+		flatOut4[2] << ", " << flatOut4[3] << endl << endl;
 #endif
 
 
@@ -907,30 +927,33 @@ int main() {
 	State state;
 	updateState(inputs, state, 1,0,1, 0,0,1);
 
-	// Print initial state
-	matrix abg = {{state.a}, {state.b}, {state.g}};
-	matrix pqr = {{state.p}, {state.q}, {state.r}};
-	cout << "Init state:\n";
-	cout << "pos:  " << state.x << ", " << state.y << ", " << state.z << endl;
-	cout << "vel:  " << state.vx << ", " << state.vy << ", " << state.vz << endl;
-	cout << "abg:  " << state.a << ", " << state.b << ", " << state.g << endl;
-	cout << "pqr:  " << state.p << ", " << state.q << ", " << state.r << endl << endl;
-
-	// phi,th,psi,R,d_phi,d_th,d_psi equations are ok
+	// Print flat outputs
+	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
+		flatOut[2] << ", " << flatOut[3] << endl;
+	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
+		flatOut1[2] << ", " << flatOut1[3] << endl;
+	cout << "flatOut2: " << flatOut2[0] << ", " << flatOut2[1] << ", " <<
+		flatOut2[2] << ", " << flatOut2[3] << endl;
+	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
+		flatOut3[2] << ", " << flatOut3[3] << endl;
+	cout << "flatOut4: " << flatOut4[0] << ", " << flatOut4[1] << ", " <<
+		flatOut4[2] << ", " << flatOut4[3] << endl;
 
 	// Evaluate all equations
 	matrix rpy = {{equations.phi.evalf()},{equations.theta.evalf()},{equations.psi.evalf()}};
 	matrix d_rpy = {{equations.d_phi.evalf()},{equations.d_theta.evalf()},{equations.d_psi.evalf()}};
-	matrix omega = ex_to<matrix>(equations.omega.evalf().evalm());
-	matrix d_omega = ex_to<matrix>(equations.d_omega.evalf().evalm());
-	matrix R = ex_to<matrix>(equations.R.evalf().evalm());
-	matrix d_R = ex_to<matrix>(equations.d_R.evalf().evalm());
-	matrix dd_R = ex_to<matrix>(equations.dd_R.evalf().evalm());
+	matrix omega = ex_to<matrix>(equations.omega.evalf());
+	matrix d_omega = ex_to<matrix>(equations.d_omega.evalf());
+	matrix R = ex_to<matrix>(equations.R.evalf());
+	matrix d_R = ex_to<matrix>(equations.d_R.evalf());
+	matrix dd_R = ex_to<matrix>(equations.dd_R.evalf());
 	matrix Omega = R.transpose().mul(d_R);
 	ex d_OmegaEx = d_R.transpose() * d_R + R.transpose() * dd_R;
 	matrix d_Omega = ex_to<matrix>(d_OmegaEx.evalm());
-
-	cout << "\n\nNumeric\n";
+	ex u_thrust = (equations.u_thrust.evalf());
+	matrix u_torque = ex_to<matrix>(equations.u_torque.evalf());
+	
+	cout << "\nNumeric\n";
 	cout << "rpy:   " << rpy << endl;
 	cout << "d_rpy: " << d_rpy << endl;
 	cout << "omega: " << omega << endl;
@@ -940,4 +963,17 @@ int main() {
 	cout << "dd_R:   " << dd_R << endl;
 	cout << "Omega:     " << Omega << endl;
 	cout << "d_Omega:   " << d_Omega << endl;
+	cout << "u_thrust:   " << u_thrust << endl;
+	cout << "u_torque:   " << u_torque << endl;
+
+	
+	// Checking that the system equations are the inverse of the endogenous
+	matrix e3 = {{0},{0},{1}};
+	ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
+	ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
+
+	cout << "\nFrom inputs u_* back to dynamics: " << endl;
+	cout << "accel: " << accel << endl;	
+	cout << "angAcc: " << angAcc << endl;
+
 }

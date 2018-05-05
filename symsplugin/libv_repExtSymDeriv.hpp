@@ -40,7 +40,7 @@
 
 #define PLUGIN_VERSION 4 // 2 since version 3.2.1, 3 since V3.3.1, 4 since V3.4.0
 
-// input vector: thrust + torques
+// input vector: thrust + torques in v_vrep axis convention
 struct Inputs {
 	double fz, tx, ty, tz;
 };
