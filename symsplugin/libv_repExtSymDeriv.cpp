@@ -4,8 +4,9 @@
 
 
 // #define DEBUG
-// #define DEBUG_PRINT
+#define DEBUG_PRINT_INIT
 #define DEBUG_PRINT_FLAT_OUTPUTS
+#define DEBUG_PRINT_INPUTS
 
 
 #define CONCAT(x,y,z) x y z
@@ -340,31 +341,29 @@ matrix rpyRate2omega(matrix rpyRate, matrix rpy) {
 }
 
 
-matrix omega2abgRate(matrix angVelVrep, matrix abg) {
+matrix omegaVrep2abgRate(matrix angVelVrep, matrix abg) {
 
-	// NOTE: changing reference is enough?
-	matrix angVel = vectorVrepTransform(angVelVrep);
-
+	// No need of changing ref: all in vrep convention
+	
 	matrix TInv = {
 		{ cos(abg(2,0))/cos(abg(1,0)), -sin(abg(2,0))/cos(abg(1,0)), 0},
 		{ sin(abg(2,0)), cos(abg(2,0)), 0},
 		{ -(cos(abg(2,0))*sin(abg(1,0)))/cos(abg(1,0)), (sin(abg(1,0))*sin(abg(2,0)))/cos(abg(1,0)), 1}};
 
-	return TInv.mul(angVel);
+	return TInv.mul(angVelVrep);
 }
 
 
-matrix abgRate2omega(matrix abgRate, matrix abg) {
+matrix abgRate2omegaVrep(matrix abgRate, matrix abg) {
+
+	// No need of changing ref: all in vrep convention
 
 	matrix T = {
 		{ cos(abg(1,0))*cos(abg(2,0)), sin(abg(2,0)), 0},
 		{ -cos(abg(1,0))*sin(abg(2,0)), cos(abg(2,0)), 0},
 		{ sin(abg(1,0)), 0, 1}};
 
-	matrix omegaVrep = T.mul(abgRate);
-
-	// NOTE: changing reference is enough?
-	return vectorVrepTransform(omegaVrep);
+	return T.mul(abgRate);
 }
 
 
@@ -539,12 +538,12 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_y, (float)state.vy);
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_z, (float)state.vz);
 
-	matrix abgD1 = omega2abgRate(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}}));
+	matrix abgD1 = omegaVrep2abgRate(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}}));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a, EX_TO_DOUBLE(abgD1(0,0)));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, EX_TO_DOUBLE(abgD1(1,0)));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, EX_TO_DOUBLE(abgD1(2,0)));
 
-#ifdef DEBUG_PRINT
+#ifdef DEBUG_PRINT_INIT
 	cout << "initPos " << initPos[0] << ", " << initPos[1] << ", " << initPos[2] << endl;
 	cout << "initVel " << state.vx << ", " << state.vy << ", " << state.vz << endl;
 	cout << "orient " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
@@ -632,35 +631,45 @@ void debugging(Inputs &inputs, State &state, double x, double y, double z,
 	matrix abg = {{state.a}, {state.b}, {state.g}};
 	matrix pqr = {{state.p}, {state.q}, {state.r}};
 	matrix vrepAbg = {{a}, {b}, {g}};
+	matrix rpy = {{equations.phi.evalf()},{equations.theta.evalf()},{equations.psi.evalf()}};
+	matrix rpyD1 = {{equations.d_phi.evalf()},{equations.d_theta.evalf()},{equations.d_psi.evalf()}};
+
+	// set velocities
 
 	// integrate velocities
-	ex newPos = pos + 0.01 * vel;
-	matrix newPosM = ex_to<matrix>(newPos.evalm());
+	ex newPos = (pos + 0.01 * vel).evalm();
+	matrix newPosM = ex_to<matrix>(newPos);
 	matrix newPosVM = vectorVrepTransform(newPosM);
 	float newPosVF[3];
 	newPosVF[0] = EX_TO_DOUBLE(newPosVM(0,0));
 	newPosVF[1] = EX_TO_DOUBLE(newPosVM(1,0));
 	newPosVF[2] = EX_TO_DOUBLE(newPosVM(2,0));
-
-	// integrate deriv rpy
-	matrix dRpy = {{(equations.d_phi.evalf())},
-		{(equations.d_theta.evalf())},
-		{(equations.d_psi.evalf())}};
-	cout << "dRpy " << dRpy << endl;
-	intRpy = (intRpy + 0.01 * dRpy).evalm();
-	cout << "intRpy " << intRpy << endl;
-	matrix intAbg = matrix2abg(rpy2matrix(ex_to<matrix>(intRpy)));
+	simSetObjectPosition(quadcopterH, -1, newPosVF);
 	
+	// integrate deriv rpy
+	/**********************************************************************************************************************
+	* matrix abgD1 = omega2abgRate(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}})); *
+	* intAbg = (intAbg + 0.01 * abgD1).evalm();                                                                           *
+	* matrix intAbgM = ex_to<matrix>(intAbg);                                                                             *
+	* cout << "intAbg " << intAbg << endl;                                                                                *
+	* cout << "intAbgM " << intAbgM << endl;                                                                              *
+	**********************************************************************************************************************/
+	
+	intRpy = (intRpy + 0.01 * rpyD1).evalm();
+	matrix intRpyM = ex_to<matrix>(intRpy);
+	matrix intAbgM = matrix2abg(rpy2matrix(intRpyM));
 
 	float abgF[3];
-	abgF[0] = EX_TO_DOUBLE(abg(0,0));
-	abgF[1] = EX_TO_DOUBLE(abg(1,0));
-	abgF[2] = EX_TO_DOUBLE(abg(2,0));
+	abgF[0] = EX_TO_DOUBLE(intAbgM(0,0));
+	abgF[1] = EX_TO_DOUBLE(intAbgM(1,0));
+	abgF[2] = EX_TO_DOUBLE(intAbgM(2,0));
 	simSetObjectOrientation(quadcopterH, -1, abgF);
-	simSetObjectPosition(quadcopterH, -1, newPosVF);
-
-	cout << "int.abg:   " << intAbg << endl;;
-	cout << "state.abg: " << abg << endl << endl;
+	
+	cout << "omega " << equations.omega.evalf() << endl;
+	cout << "rpy " << rpy << endl;
+	cout << "rpyD1 " << rpyD1 << endl;
+	cout << "rpyD1 -> omega " << rpyRate2omega(rpyD1, rpy) << endl;
+	cout << "intRpy " << intRpy << endl << endl;
 
 	// debug: off motors
 	inputs.fz = 0;
@@ -704,6 +713,10 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	flatOut[2] = z;
 	flatOut[3] = yaw;
 
+	// Get the state of the quadrotor
+	flatOutputs2state(state);
+	flatOutputs2inputs(inputs);
+
 #ifdef DEBUG_PRINT_FLAT_OUTPUTS
 	// Deb_print
 	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
@@ -718,10 +731,10 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 		flatOut4[2] << ", " << flatOut4[3] << endl << endl;
 #endif
 
-
-	// Get the state of the quadrotor
-	flatOutputs2state(state);
-	flatOutputs2inputs(inputs);
+#ifdef DEBUG_PRINT_INPUTS
+	cout << "Inputs [fz, tx, ty, tz]: [" << inputs.fz << ", " << inputs.tx <<
+		", " << inputs.ty << ", " << inputs.tz << "]\n\n";
+#endif
 
 #ifdef DEBUG
 	debugging(inputs, state, x, y, z, a, b, g);
@@ -925,7 +938,7 @@ int main() {
 	// set a fictitious pose
 	Inputs inputs;
 	State state;
-	updateState(inputs, state, 1,0,1, 0,0,1);
+	updateState(inputs, state, 1,0,1, 0,0,0);
 
 	// Print flat outputs
 	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
@@ -974,6 +987,21 @@ int main() {
 
 	cout << "\nFrom inputs u_* back to dynamics: " << endl;
 	cout << "accel: " << accel << endl;	
-	cout << "angAcc: " << angAcc << endl;
+	cout << "angAcc: " << angAcc << endl << endl;
+
+
+	// Checking euler diff <-> angVel conversion
+	matrix rpyRate = omega2rpyRate(omega, rpy);
+	matrix omega2 = rpyRate2omega(rpyRate, rpy);
+
+	cout << "omega -> rpyRate " << rpyRate << endl;
+	cout << "rpyRate -> omega2 " << omega2 << endl;
+
+	matrix pqr = {{state.p}, {state.q}, {state.r}};
+	matrix abg = {{state.a}, {state.b}, {state.g}};
+	matrix abgRate = omegaVrep2abgRate(pqr, abg);
+	cout << "pqr " << pqr << endl;
+	cout << "pqr -> abgRate " << abgRate << endl;
+	cout << "abgRate -> pqr2 " << abgRate2omegaVrep(abgRate, abg) << endl;
 
 }
