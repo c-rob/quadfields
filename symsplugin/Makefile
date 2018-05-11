@@ -23,6 +23,14 @@ $(DESTEXE): CXXFLAGS=-x c++ -std=c++11 -Wall -Wextra -Wno-unused-parameter -O0 -
 
 # Do stuff
 
+# Default target: make library .so
+mklib:
+ifneq ("$(wildcard $(DESTEXE))","")
+	$(MAKE) clean $(DESTLIB)
+else
+	$(MAKE) $(DESTLIB)
+endif
+
 install: mklib
 	install $(DESTLIB) $(VREPDIR)/
 
@@ -32,13 +40,6 @@ ifneq ("$(wildcard $(DESTLIB))","")
 	$(MAKE) clean $(DESTEXE)
 else
 	$(MAKE) $(DESTEXE)
-endif
-
-mklib:
-ifneq ("$(wildcard $(DESTEXE))","")
-	$(MAKE) clean $(DESTLIB)
-else
-	$(MAKE) $(DESTLIB)
 endif
 
 
