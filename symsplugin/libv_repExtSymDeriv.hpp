@@ -14,6 +14,7 @@
 #include <cln/cln.h>
 #include <ginac/ginac.h>
 #include "v_repLib.h"
+#include "tinyIntegrator.hpp"
 #include "luaFunctionData.h"
 #include "scriptFunctionData.h"
 #include "stack/stackArray.h"

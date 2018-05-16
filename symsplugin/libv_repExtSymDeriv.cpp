@@ -3,7 +3,7 @@
 #include "libv_repExtSymDeriv.hpp"
 
 
-// #define DEBUG
+#define DEBUG
 #define DEBUG_PRINT_INIT
 #define DEBUG_PRINT_FLAT_OUTPUTS
 #define DEBUG_PRINT_INPUTS
@@ -81,12 +81,12 @@ matrix flatOut_D3;
 matrix flatOut_D4;
 
 
-
-// Debug symbols to delete
-ex intVel = matrix(3, 1);
-ex intAbg = matrix(3, 1);
-ex intRpy = matrix(3, 1);
-ex abgLast = matrix(3, 1);
+// Debug variables for integration
+const float dt = 0.01;
+TinyIntegrator linVelInt("(paper) Linear veocity", dt, matrix(3,1)),
+			   angVelInt("(paper) Angular velocity", dt, matrix(3,1)),
+			   linPosInt("(paper) Position", dt, matrix(3,1)),
+			   angPosInt("(paper) Angular pose", dt, matrix(3,1));
 
 
 /*
@@ -518,19 +518,22 @@ void genSymbolicEquations(void) {
 
 void setVrepInitialState(void) {
 
+	// TODO: make the name of the shape parametric
 
-    // get initial position of the quadcopter shape
+    // Get the initial pose of the quadcopter shape in the vrep scene
     quadcopterH = simGetObjectHandle("Quadricopter");
-	float initPos[3];
-	simGetObjectPosition(quadcopterH, -1, initPos);
-	
+	float initVrepPos[3];
+	float initVrepAbg[3];
+	simGetObjectOrientation(quadcopterH, -1, initVrepAbg);
+	simGetObjectPosition(quadcopterH, -1, initVrepPos);
+
 	// Compute a configuration in the field
     Inputs inputs;
     State state;
-    updateState(inputs, state, initPos[0], initPos[1], initPos[2], 0, 0, 0);
-        // NOTE: arg 8 is the 4-th flat output, set to 0 here. 6-7 args are not needed
+    updateState(inputs, state, initVrepPos[0], initVrepPos[1], initVrepPos[2], initVrepAbg[0], initVrepAbg[1], initVrepAbg[2]);
+        // NOTE: arg 8 is the 4-th flat output. 6-7 args can be different from state.a,state.b
 	
-	// Set other properties
+	// Set the vrep state
 	const float abg[] = {(float)state.a, (float)state.b, (float)state.g};
 	simSetObjectOrientation(quadcopterH, -1, abg);
 
@@ -544,16 +547,26 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, EX_TO_DOUBLE(abgD1(2,0)));
 
 #ifdef DEBUG_PRINT_INIT
-	cout << "initPos " << initPos[0] << ", " << initPos[1] << ", " << initPos[2] << endl;
+	cout << "Initital pose get:\n";
+	cout << "InitVrepPos: " << initVrepPos[0] << ", " << initVrepPos[1] << ", " << initVrepPos[2] << endl;
+	cout << "InitVrepAbg: " << initVrepAbg[0] << ", " << initVrepAbg[1] << ", " << initVrepAbg[2] << endl;
+	cout << "Inital state set:" << endl;
+	cout << "initPos " << initVrepPos[0] << ", " << initVrepPos[1] << ", " << initVrepPos[2] << endl;
 	cout << "initVel " << state.vx << ", " << state.vy << ", " << state.vz << endl;
 	cout << "orient " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
-	cout << "Dorient " << abgD1 << endl;
+	cout << "Dorient " << abgD1 << endl << endl;
 #endif
 
 #ifdef DEBUG
-	intVel = vectorVrepTransform(matrix({{state.vx}, {state.vy}, {state.vz}}));
-	intAbg = matrix({{abg[0]},{abg[1]},{abg[2]}});
-	intRpy = matrix(3,1); // assuming start from horizontal
+	// Integrating position and rpy
+	// Set integrators' initial states here
+	linVelInt.setInitialState(matrix{{flatOut1[0]},{flatOut1[1]},{flatOut1[2]}});
+	linPosInt.setInitialState(matrix{{flatOut[0]},{flatOut[1]},{flatOut[2]}});
+	angPosInt.setInitialState(matrix{{equations.phi.evalf()},
+				{equations.theta.evalf()}, {equations.psi.evalf()}});
+	angVelInt.setInitialState(matrix{{equations.d_phi.evalf()},
+				{equations.d_theta.evalf()}, {equations.d_psi.evalf()}});
+		cout << linVelInt << endl << angVelInt << endl << linPosInt << endl << angPosInt << endl << endl;
 #endif
 }
 
@@ -618,58 +631,52 @@ int initField(string fieldFilePath, bool vrepCaller) {
 }
 
 
-void debugging(Inputs &inputs, State &state, double x, double y, double z,
-        double a, double b, double g) {
+void debugging(Inputs& inputs) {
 
-	// state
-	matrix pos = {{x}, {y}, {z}};
-	matrix velV = {{state.vx},{state.vy},{state.vz}};
-	matrix vel = vectorVrepTransform(velV);
-	matrix acc = {{flatOut2[0]},{flatOut2[1]},{flatOut2[2]}};
-	matrix jerk = {{flatOut3[0]},{flatOut3[1]},{flatOut3[2]}};
-	matrix snap = {{flatOut4[0]},{flatOut4[1]},{flatOut4[2]}};
-	matrix abg = {{state.a}, {state.b}, {state.g}};
-	matrix pqr = {{state.p}, {state.q}, {state.r}};
-	matrix vrepAbg = {{a}, {b}, {g}};
-	matrix rpy = {{equations.phi.evalf()},{equations.theta.evalf()},{equations.psi.evalf()}};
-	matrix rpyD1 = {{equations.d_phi.evalf()},{equations.d_theta.evalf()},{equations.d_psi.evalf()}};
+	// Inputs
+	ex u_thrust = (equations.u_thrust.evalf());
+	matrix u_torque = ex_to<matrix>(equations.u_torque.evalf());
 
-	// set velocities
+	// Prepare whats needed
+	matrix e3 = {{0},{0},{1}};
+	matrix R = rpy2matrix(angPosInt.getMat());
+	matrix omega = rpyRate2omega(angVelInt.getMat(), angPosInt.getMat());
+	matrix Omega = {{0, -omega(2,0), omega(1,0)},
+					{omega(2,0), 0, -omega(0,0)},
+					{-omega(1,0), omega(0,0), 0}};
 
-	// integrate velocities
-	ex newPos = (pos + 0.01 * vel).evalm();
-	matrix newPosM = ex_to<matrix>(newPos);
-	matrix newPosVM = vectorVrepTransform(newPosM);
-	float newPosVF[3];
-	newPosVF[0] = EX_TO_DOUBLE(newPosVM(0,0));
-	newPosVF[1] = EX_TO_DOUBLE(newPosVM(1,0));
-	newPosVF[2] = EX_TO_DOUBLE(newPosVM(2,0));
-	simSetObjectPosition(quadcopterH, -1, newPosVF);
-	
-	// integrate deriv rpy
-	/**********************************************************************************************************************
-	* matrix abgD1 = omega2abgRate(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}})); *
-	* intAbg = (intAbg + 0.01 * abgD1).evalm();                                                                           *
-	* matrix intAbgM = ex_to<matrix>(intAbg);                                                                             *
-	* cout << "intAbg " << intAbg << endl;                                                                                *
-	* cout << "intAbgM " << intAbgM << endl;                                                                              *
-	**********************************************************************************************************************/
-	
-	intRpy = (intRpy + 0.01 * rpyD1).evalm();
-	matrix intRpyM = ex_to<matrix>(intRpy);
-	matrix intAbgM = matrix2abg(rpy2matrix(intRpyM));
+	// Back to accelerations
+	ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
+	ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
 
-	float abgF[3];
-	abgF[0] = EX_TO_DOUBLE(intAbgM(0,0));
-	abgF[1] = EX_TO_DOUBLE(intAbgM(1,0));
-	abgF[2] = EX_TO_DOUBLE(intAbgM(2,0));
-	simSetObjectOrientation(quadcopterH, -1, abgF);
-	
-	cout << "omega " << equations.omega.evalf() << endl;
-	cout << "rpy " << rpy << endl;
-	cout << "rpyD1 " << rpyD1 << endl;
-	cout << "rpyD1 -> omega " << rpyRate2omega(rpyD1, rpy) << endl;
-	cout << "intRpy " << intRpy << endl << endl;
+	// print
+	cout << "Accel: " << accel << endl;
+	cout << "AngAcc: " << angAcc << endl;
+	cout << endl;
+
+	// Update state
+	linPosInt.update(linVelInt.get());
+	linVelInt.update(accel);
+	angPosInt.update(angVelInt.get());
+	angVelInt.update(angAcc);
+
+	cout << linVelInt << endl << angVelInt << endl << linPosInt << endl << angPosInt << endl << endl;
+
+	// Vrep convention
+	matrix vrepLinPos = vectorVrepTransform(linPosInt.getMat());
+	float vrepLinPosF[3];
+	vrepLinPosF[0] = EX_TO_DOUBLE(vrepLinPos(0,0));
+	vrepLinPosF[1] = EX_TO_DOUBLE(vrepLinPos(1,0));
+	vrepLinPosF[2] = EX_TO_DOUBLE(vrepLinPos(2,0));
+
+	matrix vrepAbgPos = matrix2abg(rpy2matrix(angPosInt.getMat()));
+	float vrepAbgPosF[3];
+	vrepAbgPosF[0] = EX_TO_DOUBLE(vrepAbgPos(0,0));
+	vrepAbgPosF[1] = EX_TO_DOUBLE(vrepAbgPos(1,0));
+	vrepAbgPosF[2] = EX_TO_DOUBLE(vrepAbgPos(2,0));
+
+	simSetObjectPosition(quadcopterH, -1, vrepLinPosF);
+	simSetObjectOrientation(quadcopterH, -1, vrepAbgPosF);
 
 	// debug: off motors
 	inputs.fz = 0;
@@ -737,7 +744,7 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 #endif
 
 #ifdef DEBUG
-	debugging(inputs, state, x, y, z, a, b, g);
+	debugging(inputs);
 #endif
 }
 
@@ -929,16 +936,20 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 
 int main() {
 	
-	// init properties
+	// Set the same Vrep dynamic properties
 	mass = 0.87;
-	J_inertia.add(ex_to<matrix>(diag_matrix({0.006,0.006,0.012})));
+	J_inertia.set(0,0, 0.006);
+	J_inertia.set(1,1, 0.006);
+	J_inertia.set(2,2, 0.011);
+	cout << "Mass: " << mass << endl;
+	cout << "Inertia: " << J_inertia << endl;
 
 	initField("./vector-field.txt", false);
 
 	// set a fictitious pose
 	Inputs inputs;
 	State state;
-	updateState(inputs, state, 1,0,1, 0,0,0);
+	updateState(inputs, state, 1.0, 0.0, 1.0, 0, 0, 1.5707966074693537895);
 
 	// Print flat outputs
 	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
@@ -952,7 +963,7 @@ int main() {
 	cout << "flatOut4: " << flatOut4[0] << ", " << flatOut4[1] << ", " <<
 		flatOut4[2] << ", " << flatOut4[3] << endl;
 
-	// Evaluate all equations
+	// Evaluate all equations: these are well tested
 	matrix rpy = {{equations.phi.evalf()},{equations.theta.evalf()},{equations.psi.evalf()}};
 	matrix d_rpy = {{equations.d_phi.evalf()},{equations.d_theta.evalf()},{equations.d_psi.evalf()}};
 	matrix omega = ex_to<matrix>(equations.omega.evalf());
@@ -980,7 +991,7 @@ int main() {
 	cout << "u_torque:   " << u_torque << endl;
 
 	
-	// Checking that the system equations are the inverse of the endogenous
+	// Checking that the system equations are the inverse of the endogenous: done
 	matrix e3 = {{0},{0},{1}};
 	ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
 	ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
@@ -990,7 +1001,7 @@ int main() {
 	cout << "angAcc: " << angAcc << endl << endl;
 
 
-	// Checking euler diff <-> angVel conversion
+	// Checking euler diff <-> angVel conversion: done
 	matrix rpyRate = omega2rpyRate(omega, rpy);
 	matrix omega2 = rpyRate2omega(rpyRate, rpy);
 

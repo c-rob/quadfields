@@ -23,3 +23,4 @@ Dingjiang Zhou and Mac Schwager
 	* See "Field controller" scene for usage
 	* The plugin has been written for V-REP 3.4.0. A newer API might require
 		minor changes in the code.
+	* Euler angles singularity at 90° pitch

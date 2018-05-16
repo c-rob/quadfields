@@ -8,8 +8,8 @@ CXXFLAGS=-x c++ -std=c++11 -Wall -Wextra -Wno-unused-parameter -O3 -fPIC
 LDFLAGS=-lstdc++ -ldl -lcln -lginac
 
 # all built files in the current dir
-SOURCES=libv_repExtSymDeriv.cpp $(shell echo ./vrep/common/stack/*.cpp) $(shell echo ./vrep/common/*.cpp)
-INCLUDES=libv_repExtSymDeriv.hpp
+SOURCES=libv_repExtSymDeriv.cpp tinyIntegrator.cpp $(shell echo ./vrep/common/stack/*.cpp) $(shell echo ./vrep/common/*.cpp)
+INCLUDES=libv_repExtSymDeriv.hpp tinyIntegrator.hpp
 DESTEXE=v_repExtSymDeriv
 DESTLIB=libv_repExtSymDeriv.so
 OBJECTS=$(SOURCES:.cpp=.o)
