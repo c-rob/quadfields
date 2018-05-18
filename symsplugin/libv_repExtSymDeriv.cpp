@@ -5,8 +5,8 @@
 
 #define DEBUG
 #define DEBUG_PRINT_INIT
-#define DEBUG_PRINT_FLAT_OUTPUTS
-#define DEBUG_PRINT_INPUTS
+//#define DEBUG_PRINT_FLAT_OUTPUTS
+//#define DEBUG_PRINT_INPUTS
 
 
 #define CONCAT(x,y,z) x y z
@@ -84,9 +84,9 @@ matrix flatOut_D4;
 // Debug variables for integration
 const float dt = 0.01;
 TinyIntegrator linVelInt("(paper) Linear veocity", dt, matrix(3,1)),
-			   angVelInt("(paper) Angular velocity", dt, matrix(3,1)),
 			   linPosInt("(paper) Position", dt, matrix(3,1)),
-			   angPosInt("(paper) Angular pose", dt, matrix(3,1));
+			   d_RInt("(paper) d_R", dt, matrix(3,3)),
+			   RInt("(paper) R", dt, matrix(3,3));
 
 
 /*
@@ -562,11 +562,13 @@ void setVrepInitialState(void) {
 	// Set integrators' initial states here
 	linVelInt.setInitialState(matrix{{flatOut1[0]},{flatOut1[1]},{flatOut1[2]}});
 	linPosInt.setInitialState(matrix{{flatOut[0]},{flatOut[1]},{flatOut[2]}});
-	angPosInt.setInitialState(matrix{{equations.phi.evalf()},
-				{equations.theta.evalf()}, {equations.psi.evalf()}});
-	angVelInt.setInitialState(matrix{{equations.d_phi.evalf()},
-				{equations.d_theta.evalf()}, {equations.d_psi.evalf()}});
-		cout << linVelInt << endl << angVelInt << endl << linPosInt << endl << angPosInt << endl << endl;
+	RInt.setInitialState(equations.R.evalf());		// R
+	matrix omegaF = ex_to<matrix>(equations.omega.evalf());
+	matrix Omega = {{0, -omegaF(2,0), omegaF(1,0)},
+					{omegaF(2,0), 0, -omegaF(0,0)},
+					{-omegaF(1,0), omegaF(0,0), 0}};
+	d_RInt.setInitialState((equations.R.evalf() * Omega).evalm());	// d_R
+		cout << "initInt: \n" << linVelInt << endl << d_RInt << endl << linPosInt << endl << RInt << endl << endl;
 #endif
 }
 
@@ -633,34 +635,47 @@ int initField(string fieldFilePath, bool vrepCaller) {
 
 void debugging(Inputs& inputs) {
 
+	// Now testing flat outputs to inputs to field integration
 	// Inputs
 	ex u_thrust = (equations.u_thrust.evalf());
 	matrix u_torque = ex_to<matrix>(equations.u_torque.evalf());
 
 	// Prepare whats needed
 	matrix e3 = {{0},{0},{1}};
-	matrix R = rpy2matrix(angPosInt.getMat());
-	matrix omega = rpyRate2omega(angVelInt.getMat(), angPosInt.getMat());
-	matrix Omega = {{0, -omega(2,0), omega(1,0)},
-					{omega(2,0), 0, -omega(0,0)},
-					{-omega(1,0), omega(0,0), 0}};
+	matrix R = RInt.getMat();
+	matrix Omega = R.transpose().mul(d_RInt.getMat());
+	matrix omega = {{Omega(2,1)},{-Omega(2,0)},{Omega(1,0)}};
+
+	matrix RS = ex_to<matrix>(equations.R.evalf());
+	matrix d_RS = ex_to<matrix>(equations.d_R.evalf());
+	matrix omegaS = ex_to<matrix>(equations.omega.evalf());
+	matrix OmegaS = RS.transpose().mul(d_RS);
 
 	// Back to accelerations
+	//ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
+	//ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
 	ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
 	ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
+	
+	matrix angAccM = ex_to<matrix>(angAcc);
+	matrix AngAcc = {{0, -angAccM(2,0), angAccM(1,0)},
+					{angAccM(2,0), 0, -angAccM(0,0)},
+					{-angAccM(1,0), angAccM(0,0), 0}};
 
 	// print
-	cout << "Accel: " << accel << endl;
-	cout << "AngAcc: " << angAcc << endl;
-	cout << endl;
+	//cout << "Accel: " << accel << endl;
+	//cout << "AngAcc: " << angAcc << endl;
+	//cout << endl;
 
 	// Update state
 	linPosInt.update(linVelInt.get());
 	linVelInt.update(accel);
-	angPosInt.update(angVelInt.get());
-	angVelInt.update(angAcc);
 
-	cout << linVelInt << endl << angVelInt << endl << linPosInt << endl << angPosInt << endl << endl;
+	// NOTE: change R, d_R to integrals
+	d_RInt.update(R * AngAcc - R * d_RInt.getMat().transpose() * d_RInt.getMat());
+	RInt.update(d_RInt.get());
+
+	//cout << linVelInt << endl << d_RInt << endl << linPosInt << endl << RInt << endl << endl;
 
 	// Vrep convention
 	matrix vrepLinPos = vectorVrepTransform(linPosInt.getMat());
@@ -669,7 +684,7 @@ void debugging(Inputs& inputs) {
 	vrepLinPosF[1] = EX_TO_DOUBLE(vrepLinPos(1,0));
 	vrepLinPosF[2] = EX_TO_DOUBLE(vrepLinPos(2,0));
 
-	matrix vrepAbgPos = matrix2abg(rpy2matrix(angPosInt.getMat()));
+	matrix vrepAbgPos = matrix2abg(RInt.getMat());
 	float vrepAbgPosF[3];
 	vrepAbgPosF[0] = EX_TO_DOUBLE(vrepAbgPos(0,0));
 	vrepAbgPosF[1] = EX_TO_DOUBLE(vrepAbgPos(1,0));
