@@ -3,10 +3,10 @@
 #include "libv_repExtSymDeriv.hpp"
 
 
-#define DEBUG
-#define DEBUG_PRINT_INIT
-//#define DEBUG_PRINT_FLAT_OUTPUTS
-//#define DEBUG_PRINT_INPUTS
+// #define DEBUG
+// #define DEBUG_PRINT_INIT
+// #define DEBUG_PRINT_FLAT_OUTPUTS
+// #define DEBUG_PRINT_INPUTS
 
 
 #define CONCAT(x,y,z) x y z
@@ -337,6 +337,12 @@ matrix rpyRate2omega(matrix rpyRate, matrix rpy) {
 		{ 0, cos(rpy(0,0)), cos(rpy(1,0))*sin(rpy(0,0))},
 		{ 0, -sin(rpy(0,0)), cos(rpy(0,0))*cos(rpy(1,0))}};
 
+// This is the standart T to get omega in fixed frame, using the upper version
+// 	to get omega in body frame
+//		{ cos(rpy(2,0))*cos(rpy(1,0)), -sin(rpy(2,0)), 0 },
+//		{ sin(rpy(2,0))*cos(rpy(1,0)), cos(rpy(2,0)), 0 },
+//		{ -sin(rpy(1,0)), 0, 1 }};
+
 	return T.mul(rpyRate);
 }
 
@@ -439,7 +445,13 @@ void flatOutputs2inputs(Inputs &inputs) {
 	// Compute numeric values for all input equations
 	
 	matrix u_torqueF = ex_to<matrix>(equations.u_torque.evalf());
-	matrix u_torqueVrepF = vectorVrepTransform(u_torqueF);	// Convert into vrep convention
+
+	// body -> fixed -> fixedVrep -> bodyVrep
+	matrix R = ex_to<matrix>(equations.R.evalf());
+	ex u_torqueGlobal = R * u_torqueF;
+	ex u_torqueGlobalVrepE = vectorVrepTransform(ex_to<matrix>(u_torqueGlobal.evalm()));
+	matrix u_torqueVrepF = ex_to<matrix>(u_torqueGlobalVrepE.evalm());
+
 
 	inputs.tx = EX_TO_DOUBLE(u_torqueVrepF(0,0));
 	inputs.ty = EX_TO_DOUBLE(u_torqueVrepF(1,0));
@@ -962,9 +974,15 @@ int main() {
 	initField("./vector-field.txt", false);
 
 	// set a fictitious pose
+	float x = 1;
+	float y = 0;
+	float z = 1;
+	float a = 0;
+	float b = 0;
+	float g = 0.7;
 	Inputs inputs;
 	State state;
-	updateState(inputs, state, 1.0, 0.0, 1.0, 0, 0, 1.5707966074693537895);
+	updateState(inputs, state, x, y, z, a, b, g);
 
 	// Print flat outputs
 	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
@@ -1030,4 +1048,14 @@ int main() {
 	cout << "pqr -> abgRate " << abgRate << endl;
 	cout << "abgRate -> pqr2 " << abgRate2omegaVrep(abgRate, abg) << endl;
 
+
+	// changing torque reference frame
+	matrix torGlobal = R.mul(u_torque);
+	matrix torGlobalV = vectorVrepTransform(torGlobal);
+
+	cout << "u_torque:   " << u_torque << endl;
+	cout << "u_torque global " << torGlobalV << endl;
+
+
+	cout << "RR: " << abg2matrix(matrix{{Sx},{Sy},{Sz}}) << endl;
 }
