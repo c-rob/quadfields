@@ -3,15 +3,16 @@
 #include "libv_repExtSymDeriv.hpp"
 
 
-// #define DEBUG
-// #define DEBUG_PRINT_INIT
-// #define DEBUG_PRINT_FLAT_OUTPUTS
-// #define DEBUG_PRINT_INPUTS
+#define DEBUG
+#define DEBUG_PRINT_INIT
+#define DEBUG_PRINT_FLAT_OUTPUTS
+#define DEBUG_PRINT_INPUTS
 
 
 #define CONCAT(x,y,z) x y z
 #define strConCat(x,y,z)    CONCAT(x,y,z)
 #define EX_TO_DOUBLE(x)	GiNaC::ex_to<numeric>(x).to_double()
+#define GINAC_3VEC(x) matrix({{x[0]}, {x[1]}, {x[2]}})
 
 using namespace GiNaC;
 using namespace std;
@@ -44,6 +45,7 @@ ex flatOut3[4];
 ex flatOut4[4];
 
 // State vector; saved in vrep conventions (angles and frames)
+//		p,q,r is the angular velocity in global vrep frame
 struct State {
 	double x, y, z, vx, vy, vz, a, b, g, p, q, r;
 };
@@ -288,6 +290,7 @@ matrix abg2matrix(matrix abg) {
 	matrix Rx = {{1, 0, 0}, {0, cos(a), -sin(a)}, {0, sin(a), cos(a)}};
 
 	// NOTE: Should I take the inverted axis into account?
+	//		Attention: this is valid just for the transf y => -y, z => -z
 	matrix Ryi = Ry.transpose();
 	matrix Rzi = Rz.transpose();
 
@@ -311,6 +314,7 @@ matrix matrix2abg(matrix m) {
 	// [a,b,g] = [alpha,beta,gamma]
 
 	// NOTE: Opposite b,g: should I take the inverted axis into account?
+	//		Attention: this is valid just for the transf y => -y, z => -z
 	ex a = atan2(-m(1,2), m(2,2));
 	ex b = atan2(-m(0,2), sqrt(m(1,2)*m(1,2) + m(2,2)*m(2,2)));
 	ex g = atan2(m(0,1), m(0,0));
@@ -357,6 +361,21 @@ matrix omegaVrep2abgRate(matrix angVelVrep, matrix abg) {
 		{ -(cos(abg(2,0))*sin(abg(1,0)))/cos(abg(1,0)), (sin(abg(1,0))*sin(abg(2,0)))/cos(abg(1,0)), 1}};
 
 	return TInv.mul(angVelVrep);
+
+/*
+ *    // No need of changing ref: all in vrep convention
+ *    // assuming abgVelVrep is in vrep global frame
+ *
+ *    ex a = abg(0,0);
+ *    ex b = abg(1,0);
+ *    
+ *    matrix TInv = {
+ *        { 1, (sin(a)*sin(b))/cos(b), -(cos(a)*sin(b))/cos(b)},
+ *        { 0,				 cos(a),				  sin(a)},
+ *        { 0,		 -sin(a)/cos(b),		   cos(a)/cos(b)}};
+ *
+ *    return TInv.mul(angVelVrep);
+ */
 }
 
 
@@ -370,6 +389,21 @@ matrix abgRate2omegaVrep(matrix abgRate, matrix abg) {
 		{ sin(abg(1,0)), 0, 1}};
 
 	return T.mul(abgRate);
+
+/*
+ *    // No need of changing ref: all in vrep convention
+ *    // return omega in global vrep frame
+ *    
+ *    ex a = abg(0,0);
+ *    ex b = abg(1,0);
+ *    
+ *    matrix T = {
+ *        { 1, 0, sin(b)},
+ *        { 0, cos(a), -cos(b)*sin(a)},
+ *        { 0, sin(a),  cos(a)*cos(b)}};
+ *
+ *    return T.mul(abgRate);
+ */
 }
 
 
@@ -410,9 +444,11 @@ void flatOutputs2state(State &state) {
 	ex theta = equations.theta.evalf();
 	ex psi = flatOut[3];
 
-	ex p = equations.omega(0,0).evalf();
-	ex q = equations.omega(1,0).evalf();
-	ex r = equations.omega(2,0).evalf();
+	ex omegaGlobal = equations.R * equations.omega;
+	matrix omegaGlobalM = ex_to<matrix>(omegaGlobal.evalm().evalf());
+	ex p = omegaGlobalM(0,0);
+	ex q = omegaGlobalM(1,0);
+	ex r = omegaGlobalM(2,0);
 	 
 	
 	// Transform to Vrep convention
@@ -558,6 +594,8 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, EX_TO_DOUBLE(abgD1(1,0)));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, EX_TO_DOUBLE(abgD1(2,0)));
 
+	simResetDynamicObject(quadcopterH);
+
 #ifdef DEBUG_PRINT_INIT
 	cout << "Initital pose get:\n";
 	cout << "InitVrepPos: " << initVrepPos[0] << ", " << initVrepPos[1] << ", " << initVrepPos[2] << endl;
@@ -565,8 +603,10 @@ void setVrepInitialState(void) {
 	cout << "Inital state set:" << endl;
 	cout << "initPos " << initVrepPos[0] << ", " << initVrepPos[1] << ", " << initVrepPos[2] << endl;
 	cout << "initVel " << state.vx << ", " << state.vy << ", " << state.vz << endl;
-	cout << "orient " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
-	cout << "Dorient " << abgD1 << endl << endl;
+	cout << "abg " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
+	cout << "Dabg " << abgD1 << endl;
+	cout << "Other\n";
+	cout << "pqr " << matrix({{state.p}, {state.q}, {state.r}}) << endl << endl;
 #endif
 
 #ifdef DEBUG
@@ -645,7 +685,7 @@ int initField(string fieldFilePath, bool vrepCaller) {
 }
 
 
-void debugging(Inputs& inputs) {
+void debugging(Inputs& inputs, State& state) {
 
 	// Now testing flat outputs to inputs to field integration
 	// Inputs
@@ -657,11 +697,6 @@ void debugging(Inputs& inputs) {
 	matrix R = RInt.getMat();
 	matrix Omega = R.transpose().mul(d_RInt.getMat());
 	matrix omega = {{Omega(2,1)},{-Omega(2,0)},{Omega(1,0)}};
-
-	matrix RS = ex_to<matrix>(equations.R.evalf());
-	matrix d_RS = ex_to<matrix>(equations.d_R.evalf());
-	matrix omegaS = ex_to<matrix>(equations.omega.evalf());
-	matrix OmegaS = RS.transpose().mul(d_RS);
 
 	// Back to accelerations
 	//ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
@@ -696,26 +731,63 @@ void debugging(Inputs& inputs) {
 	vrepLinPosF[1] = EX_TO_DOUBLE(vrepLinPos(1,0));
 	vrepLinPosF[2] = EX_TO_DOUBLE(vrepLinPos(2,0));
 
+
 	matrix vrepAbgPos = matrix2abg(RInt.getMat());
 	float vrepAbgPosF[3];
 	vrepAbgPosF[0] = EX_TO_DOUBLE(vrepAbgPos(0,0));
 	vrepAbgPosF[1] = EX_TO_DOUBLE(vrepAbgPos(1,0));
 	vrepAbgPosF[2] = EX_TO_DOUBLE(vrepAbgPos(2,0));
 
-	simSetObjectPosition(quadcopterH, -1, vrepLinPosF);
-	simSetObjectOrientation(quadcopterH, -1, vrepAbgPosF);
 
-	// debug: off motors
-	inputs.fz = 0;
-	inputs.tx = 0;
-	inputs.ty = 0;
-	inputs.tz = 0;
+	// compare estimated, integrated and real
+	// For now checks are done from equations
+	
+	// Estimated
+	matrix vrepLinVel = matrix({{state.vx},{state.vy},{state.vz}});
+	matrix vrepAbgVel = omegaVrep2abgRate(matrix({{state.p}, {state.q}, {state.r}}),
+				matrix({{state.a}, {state.b}, {state.g}}));
+
+	// Integrated
+	ex omegaGlobal = R * omega;
+	matrix pqrInt = vectorVrepTransform(ex_to<matrix>(omegaGlobal.evalm()));
+	matrix abgInt = matrix2abg(R);
+
+	matrix vrepLinVelInt = vectorVrepTransform(linVelInt.getMat());
+	matrix vrepAbgVelInt = omegaVrep2abgRate(pqrInt, abgInt);
+
+	// Measured
+	float vrepLinVelF[3];
+	float vrepAbgVelF[3];
+	simGetVelocity(quadcopterH, vrepLinVelF, vrepAbgVelF);
+		// ATTENTION: this function returns as thirs arg the derivative of abg rate
+
+	cout << "vrep est  linvel: " << vrepLinVel << endl;
+	cout << "vrep int  linvel: " << vrepLinVelInt << endl;
+	cout << "vrep real linvel: " << GINAC_3VEC(vrepLinVelF) << endl;
+
+	cout << "vrep est  abgvel: " << vrepAbgVel << endl;
+	cout << "vrep int  abgvel: " << vrepAbgVelInt << endl;
+	cout << "vrep real abgvel: " << GINAC_3VEC(vrepAbgVelF) << endl << endl;
+
+
+	// do not set, just printing now
+/*
+ *    simSetObjectPosition(quadcopterH, -1, vrepLinPosF);
+ *    simSetObjectOrientation(quadcopterH, -1, vrepAbgPosF);
+ *
+ *    // debug: off motors
+ *    inputs.fz = 0;
+ *    inputs.tx = 0;
+ *    inputs.ty = 0;
+ */
 }
 
 
 // The registered vrep function for evaluating the inputs
 void updateState(Inputs &inputs, State &state, double x, double y, double z,
         double a, double b, double g) {
+
+	cout << "start update state \n";
 
 	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
 	matrix vTemp = vectorVrepTransform(matrix({{x}, {y}, {z}}));
@@ -771,8 +843,10 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 #endif
 
 #ifdef DEBUG
-	debugging(inputs);
+	debugging(inputs, state);
 #endif
+
+	cout << "end update state \n\n";
 }
 
 
