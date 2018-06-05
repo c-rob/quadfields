@@ -24,15 +24,20 @@ class TinyIntegrator {
 		string name;
 		ex val;
 		double dt;
+		bool initialized;
+
+		TinyIntegrator(string varName, double timeStep, ex initialState, bool initDone):
+			name(varName), val(initialState), dt(timeStep), initialized(initDone) {}
 
 		friend std::ostream& operator<<(std::ostream& os, const TinyIntegrator& var);
 		
 	public:
 
-		TinyIntegrator(string varName, double timeStep): TinyIntegrator(varName, timeStep, 0) {}
+		TinyIntegrator(string varName, double timeStep):
+			TinyIntegrator(varName, timeStep, 0, false) {}
 
 		TinyIntegrator(string varName, double timeStep, ex initialState):
-			name(varName), val(initialState), dt(timeStep) {}
+			TinyIntegrator(varName, timeStep, initialState, false) {}
 
 		ex get(void) const {
 			return val;
@@ -48,10 +53,15 @@ class TinyIntegrator {
 
 		void setInitialState(ex initalState) {
 			val = initalState;
+			initialized = true;
 		}
 
 		ex update(ex rate) {
 			val = (val + rate * dt).evalm();
 			return val;
+		}
+
+		bool isInitialized() {
+			return initialized;
 		}
 };

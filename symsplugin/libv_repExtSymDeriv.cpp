@@ -35,6 +35,7 @@ matrix J_inertia = {{1,0,0},{0,1,0},{0,0,1}};
 const float GRAVITY_G = 9.80655;
 
 
+
 /***
  * Numeric quantities in the current iteration
  ***/
@@ -84,11 +85,11 @@ matrix flatOut_D4;
 
 
 // Debug variables for integration
-const float dt = 0.01;
-TinyIntegrator linVelInt("(paper) Linear veocity", dt, matrix(3,1)),
-			   linPosInt("(paper) Position", dt, matrix(3,1)),
-			   d_RInt("(paper) d_R", dt, matrix(3,3)),
-			   RInt("(paper) R", dt, matrix(3,3));
+const float dt = 0.005;
+TinyIntegrator linVelInt("(paper) Linear veocity", dt),	// 3x1 vector
+			   linPosInt("(paper) Position", dt),       // 3x1 vector
+			   d_RInt("(paper) d_R", dt),               // 3x3 matrix
+			   RInt("(paper) R", dt);                   // 3x3 matrix
 
 
 /*
@@ -259,7 +260,29 @@ void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 
 matrix vectorVrepTransform(const matrix& vec) {
 
+	// NOTE: this must be coherent with vectorVrepR()
+
 	return matrix({{vec(0,0)}, {-vec(1,0)}, {-vec(2,0)}});
+}
+
+
+matrix vectorVrepR() {
+
+	// NOTE: this must be coherent with vectorVrepR()
+	
+	return matrix({{1,0,0},{0,-1,0},{0,0,-1}});
+}
+
+
+matrix matrixVrepTransform(const matrix& mat) {
+
+	// This is a transformation that returns the matrix corresponding to
+	// the same rotation matrix, in the other axis convention
+	//	(equal to its inverse)
+	
+	matrix Rpv = vectorVrepR();		// NOTE: assuming this is equal to its inverse
+	ex R = Rpv * mat * Rpv;
+	return ex_to<matrix>(R.evalm());
 }
 
 
@@ -280,6 +303,8 @@ matrix rpy2matrix(matrix rpy) {
 
 matrix abg2matrix(matrix abg) {
 	// [a,b,g] = [alpha,beta,gamma]
+	//
+	// NOTE: all from, to vrep axis: classic rotation
 
 	ex a = abg(0,0);
 	ex b = abg(1,0);
@@ -289,12 +314,7 @@ matrix abg2matrix(matrix abg) {
 	matrix Ry = {{cos(b), 0, sin(b)}, {0, 1, 0}, {-sin(b), 0, cos(b)}};
 	matrix Rx = {{1, 0, 0}, {0, cos(a), -sin(a)}, {0, sin(a), cos(a)}};
 
-	// NOTE: Should I take the inverted axis into account?
-	//		Attention: this is valid just for the transf y => -y, z => -z
-	matrix Ryi = Ry.transpose();
-	matrix Rzi = Rz.transpose();
-
-	return Rx.mul(Ryi.mul(Rzi));
+	return Rx.mul(Ry.mul(Rz));
 }
 
 
@@ -313,11 +333,11 @@ matrix matrix2rpy(matrix m) {
 matrix matrix2abg(matrix m) {
 	// [a,b,g] = [alpha,beta,gamma]
 
-	// NOTE: Opposite b,g: should I take the inverted axis into account?
-	//		Attention: this is valid just for the transf y => -y, z => -z
+	// NOTE: all from, to vrep axis: classic rotation
+
 	ex a = atan2(-m(1,2), m(2,2));
-	ex b = atan2(-m(0,2), sqrt(m(1,2)*m(1,2) + m(2,2)*m(2,2)));
-	ex g = atan2(m(0,1), m(0,0));
+	ex b = atan2(m(0,2), sqrt(m(0,1)*m(0,1) + m(0,0)*m(0,0)));
+	ex g = atan2(-m(0,1), m(0,0));
 
 	return matrix({{a}, {b}, {g}});
 }
@@ -353,57 +373,55 @@ matrix rpyRate2omega(matrix rpyRate, matrix rpy) {
 
 matrix omegaVrep2abgRate(matrix angVelVrep, matrix abg) {
 
+	// NOTE: omega in vrep global frame
+
+	ex a = abg(0,0);
+	ex b = abg(1,0);
+
+	matrix TInv = {
+		{ 1, (sin(a)*sin(b))/cos(b), -(cos(a)*sin(b))/cos(b)},
+		{ 0,                 cos(a),                  sin(a)},
+		{ 0,         -sin(a)/cos(b),           cos(a)/cos(b)}
+	};
+
+	/*		This is the old T
 	// No need of changing ref: all in vrep convention
 	
 	matrix TInv = {
 		{ cos(abg(2,0))/cos(abg(1,0)), -sin(abg(2,0))/cos(abg(1,0)), 0},
 		{ sin(abg(2,0)), cos(abg(2,0)), 0},
 		{ -(cos(abg(2,0))*sin(abg(1,0)))/cos(abg(1,0)), (sin(abg(1,0))*sin(abg(2,0)))/cos(abg(1,0)), 1}};
+	*/
 
 	return TInv.mul(angVelVrep);
 
-/*
- *    // No need of changing ref: all in vrep convention
- *    // assuming abgVelVrep is in vrep global frame
- *
- *    ex a = abg(0,0);
- *    ex b = abg(1,0);
- *    
- *    matrix TInv = {
- *        { 1, (sin(a)*sin(b))/cos(b), -(cos(a)*sin(b))/cos(b)},
- *        { 0,				 cos(a),				  sin(a)},
- *        { 0,		 -sin(a)/cos(b),		   cos(a)/cos(b)}};
- *
- *    return TInv.mul(angVelVrep);
- */
 }
 
 
 matrix abgRate2omegaVrep(matrix abgRate, matrix abg) {
+	
+	// NOTE: omega in vrep global frame
 
+	ex a = abg(0,0);
+	ex b = abg(1,0);
+
+	matrix T = {
+		{ 1,      0,		 sin(b) },
+		{ 0, cos(a), -cos(b)*sin(a) },
+		{ 0, sin(a),  cos(a)*cos(b) }
+	};
+
+	/*		This is the old T
 	// No need of changing ref: all in vrep convention
 
 	matrix T = {
 		{ cos(abg(1,0))*cos(abg(2,0)), sin(abg(2,0)), 0},
 		{ -cos(abg(1,0))*sin(abg(2,0)), cos(abg(2,0)), 0},
 		{ sin(abg(1,0)), 0, 1}};
+	*/
 
 	return T.mul(abgRate);
 
-/*
- *    // No need of changing ref: all in vrep convention
- *    // return omega in global vrep frame
- *    
- *    ex a = abg(0,0);
- *    ex b = abg(1,0);
- *    
- *    matrix T = {
- *        { 1, 0, sin(b)},
- *        { 0, cos(a), -cos(b)*sin(a)},
- *        { 0, sin(a),  cos(a)*cos(b)}};
- *
- *    return T.mul(abgRate);
- */
 }
 
 
@@ -446,11 +464,7 @@ void flatOutputs2state(State &state) {
 
 	ex omegaGlobal = equations.R * equations.omega;
 	matrix omegaGlobalM = ex_to<matrix>(omegaGlobal.evalm().evalf());
-	ex p = omegaGlobalM(0,0);
-	ex q = omegaGlobalM(1,0);
-	ex r = omegaGlobalM(2,0);
-	 
-	
+
 	// Transform to Vrep convention
 	matrix vTemp = vectorVrepTransform(matrix({{x},{y},{z}}));
 	state.x = EX_TO_DOUBLE(vTemp(0,0));
@@ -462,16 +476,17 @@ void flatOutputs2state(State &state) {
 	state.vy = EX_TO_DOUBLE(vTemp(1,0));
 	state.vz = EX_TO_DOUBLE(vTemp(2,0));
 
-        // This must be compared to the dummy object in vrep scene (paper axis convention)
-	matrix abg = matrix2abg(rpy2matrix(matrix({{phi}, {theta}, {psi}})));
-	state.a = EX_TO_DOUBLE(ex_to<matrix>(abg)(0,0));
-	state.b = EX_TO_DOUBLE(ex_to<matrix>(abg)(1,0));
-	state.g = EX_TO_DOUBLE(ex_to<matrix>(abg)(2,0));
+	matrix Rpaper = rpy2matrix(matrix({{phi}, {theta}, {psi}}));
+	matrix Rvrep = matrixVrepTransform(Rpaper);
+	matrix abg = matrix2abg(Rvrep);
+	state.a = EX_TO_DOUBLE(abg(0,0));
+	state.b = EX_TO_DOUBLE(abg(1,0));
+	state.g = EX_TO_DOUBLE(abg(2,0));
 
-	vTemp = vectorVrepTransform(matrix({{p},{q},{r}}));
-	state.p = EX_TO_DOUBLE(ex_to<matrix>(vTemp)(0,0));
-	state.q = EX_TO_DOUBLE(ex_to<matrix>(vTemp)(1,0));
-	state.r = EX_TO_DOUBLE(ex_to<matrix>(vTemp)(2,0));
+	matrix vrepOmegaGlob = vectorVrepTransform(omegaGlobalM);
+	state.p = EX_TO_DOUBLE(ex_to<matrix>(vrepOmegaGlob)(0,0));
+	state.q = EX_TO_DOUBLE(ex_to<matrix>(vrepOmegaGlob)(1,0));
+	state.r = EX_TO_DOUBLE(ex_to<matrix>(vrepOmegaGlob)(2,0));
 
 }
 
@@ -533,7 +548,7 @@ void genSymbolicEquations(void) {
 	equations.u_torque = ex_to<matrix>(temp_u_torque.evalm());
 
 	// Inputs: thrust
-		// equations.u_thrust = m_mass * norm(flatOut_D2[0:2] - GRAVITY_G * [0;0;1])
+		// equations.u_thrust = m_mass * norm(flatOut_D	2[0:2] - GRAVITY_G * [0;0;1])
 	matrix e3 = {{0},{0},{1}};
 	matrix xyzD2 = {{symF(Sx,2,St)},{symF(Sy,2,St)},{symF(Sz,2,St)}};
 	ex thrustAccVec = (xyzD2 - GRAVITY_G * e3);			// NOTE: with gravity compensation?
@@ -589,7 +604,8 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_y, (float)state.vy);
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_z, (float)state.vz);
 
-	matrix abgD1 = omegaVrep2abgRate(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}}));
+	matrix abgD1 = omegaVrep2abgRate(matrix({{state.p}, {state.q}, {state.r}}),
+			matrix({{state.a}, {state.b}, {state.g}}));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a, EX_TO_DOUBLE(abgD1(0,0)));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, EX_TO_DOUBLE(abgD1(1,0)));
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, EX_TO_DOUBLE(abgD1(2,0)));
@@ -687,11 +703,18 @@ int initField(string fieldFilePath, bool vrepCaller) {
 
 void debugging(Inputs& inputs, State& state) {
 
-	// Now testing flat outputs to inputs to field integration
+	// Run if initialized
+	if (! RInt.isInitialized()) {
+		return;
+	}
+
 	// Inputs
 	ex u_thrust = (equations.u_thrust.evalf());
 	matrix u_torque = ex_to<matrix>(equations.u_torque.evalf());
 
+
+	// >> Begin integration: testing flat outputs to inputs to field integration
+	//
 	// Prepare whats needed
 	matrix e3 = {{0},{0},{1}};
 	matrix R = RInt.getMat();
@@ -714,71 +737,46 @@ void debugging(Inputs& inputs, State& state) {
 	//cout << "AngAcc: " << angAcc << endl;
 	//cout << endl;
 
+
 	// Update state
 	linPosInt.update(linVelInt.get());
 	linVelInt.update(accel);
 
-	// NOTE: change R, d_R to integrals
 	d_RInt.update(R * AngAcc - R * d_RInt.getMat().transpose() * d_RInt.getMat());
 	RInt.update(d_RInt.get());
 
-	//cout << linVelInt << endl << d_RInt << endl << linPosInt << endl << RInt << endl << endl;
-
-	// Vrep convention
-	matrix vrepLinPos = vectorVrepTransform(linPosInt.getMat());
-	float vrepLinPosF[3];
-	vrepLinPosF[0] = EX_TO_DOUBLE(vrepLinPos(0,0));
-	vrepLinPosF[1] = EX_TO_DOUBLE(vrepLinPos(1,0));
-	vrepLinPosF[2] = EX_TO_DOUBLE(vrepLinPos(2,0));
+	// >> End integration
 
 
-	matrix vrepAbgPos = matrix2abg(RInt.getMat());
-	float vrepAbgPosF[3];
-	vrepAbgPosF[0] = EX_TO_DOUBLE(vrepAbgPos(0,0));
-	vrepAbgPosF[1] = EX_TO_DOUBLE(vrepAbgPos(1,0));
-	vrepAbgPosF[2] = EX_TO_DOUBLE(vrepAbgPos(2,0));
-
-
-	// compare estimated, integrated and real
-	// For now checks are done from equations
-	
+	// compare estimated and real
+	//
 	// Estimated
 	matrix vrepLinVel = matrix({{state.vx},{state.vy},{state.vz}});
-	matrix vrepAbgVel = omegaVrep2abgRate(matrix({{state.p}, {state.q}, {state.r}}),
-				matrix({{state.a}, {state.b}, {state.g}}));
-
-	// Integrated
-	ex omegaGlobal = R * omega;
-	matrix pqrInt = vectorVrepTransform(ex_to<matrix>(omegaGlobal.evalm()));
-	matrix abgInt = matrix2abg(R);
-
-	matrix vrepLinVelInt = vectorVrepTransform(linVelInt.getMat());
-	matrix vrepAbgVelInt = omegaVrep2abgRate(pqrInt, abgInt);
+	matrix omegaVrep = matrix({{state.p}, {state.q}, {state.r}});
 
 	// Measured
 	float vrepLinVelF[3];
 	float vrepAbgVelF[3];
 	simGetVelocity(quadcopterH, vrepLinVelF, vrepAbgVelF);
-		// ATTENTION: this function returns as thirs arg the derivative of abg rate
+		// ATTENTION: this function returns as third arg the derivative of abg rate
 
 	cout << "vrep est  linvel: " << vrepLinVel << endl;
-	cout << "vrep int  linvel: " << vrepLinVelInt << endl;
 	cout << "vrep real linvel: " << GINAC_3VEC(vrepLinVelF) << endl;
 
-	cout << "vrep est  abgvel: " << vrepAbgVel << endl;
-	cout << "vrep int  abgvel: " << vrepAbgVelInt << endl;
+	cout << "vrep est  abgvel: " << omegaVrep << endl;
 	cout << "vrep real abgvel: " << GINAC_3VEC(vrepAbgVelF) << endl << endl;
 
 
-	// do not set, just printing now
 /*
- *    simSetObjectPosition(quadcopterH, -1, vrepLinPosF);
- *    simSetObjectOrientation(quadcopterH, -1, vrepAbgPosF);
+ *    // do not set, just printing now
+ *    simSetObjectPosition(quadcopterH, -1,);
+ *    simSetObjectOrientation(quadcopterH, -1,);
  *
  *    // debug: off motors
  *    inputs.fz = 0;
  *    inputs.tx = 0;
  *    inputs.ty = 0;
+ *    inputs.tz = 0;
  */
 }
 
@@ -787,15 +785,15 @@ void debugging(Inputs& inputs, State& state) {
 void updateState(Inputs &inputs, State &state, double x, double y, double z,
         double a, double b, double g) {
 
-	cout << "start update state \n";
-
 	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
 	matrix vTemp = vectorVrepTransform(matrix({{x}, {y}, {z}}));
 	x = EX_TO_DOUBLE(vTemp(0,0));
 	y = EX_TO_DOUBLE(vTemp(1,0));
 	z = EX_TO_DOUBLE(vTemp(2,0));
 
-    matrix rpy = matrix2rpy(abg2matrix(matrix({{a}, {b}, {g}})));
+    matrix Rvrep = abg2matrix(matrix({{a}, {b}, {g}}));
+	matrix Rpaper = matrixVrepTransform(Rvrep);
+	matrix rpy = matrix2rpy(Rpaper);
 	double yaw = EX_TO_DOUBLE(rpy(2,0));
 
 	// Evaluate the D4 vectors numerically
@@ -837,16 +835,15 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 		flatOut4[2] << ", " << flatOut4[3] << endl << endl;
 #endif
 
+#ifdef DEBUG
+	debugging(inputs, state);
+#endif
+
 #ifdef DEBUG_PRINT_INPUTS
 	cout << "Inputs [fz, tx, ty, tz]: [" << inputs.fz << ", " << inputs.tx <<
 		", " << inputs.ty << ", " << inputs.tz << "]\n\n";
 #endif
 
-#ifdef DEBUG
-	debugging(inputs, state);
-#endif
-
-	cout << "end update state \n\n";
 }
 
 
@@ -1053,12 +1050,14 @@ int main() {
 	float z = 1;
 	float a = 0;
 	float b = 0;
-	float g = 0.7;
+	// float g = 3.14159265359/2;
+	float g = 0;
 	Inputs inputs;
 	State state;
 	updateState(inputs, state, x, y, z, a, b, g);
 
 	// Print flat outputs
+	cout << "Flat outputs\n";
 	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
 		flatOut[2] << ", " << flatOut[3] << endl;
 	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
@@ -1068,7 +1067,7 @@ int main() {
 	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
 		flatOut3[2] << ", " << flatOut3[3] << endl;
 	cout << "flatOut4: " << flatOut4[0] << ", " << flatOut4[1] << ", " <<
-		flatOut4[2] << ", " << flatOut4[3] << endl;
+		flatOut4[2] << ", " << flatOut4[3] << "\n\n";
 
 	// Evaluate all equations: these are well tested
 	matrix rpy = {{equations.phi.evalf()},{equations.theta.evalf()},{equations.psi.evalf()}};
@@ -1084,11 +1083,14 @@ int main() {
 	ex u_thrust = (equations.u_thrust.evalf());
 	matrix u_torque = ex_to<matrix>(equations.u_torque.evalf());
 	
-	cout << "\nNumeric\n";
+	cout << "Paper equations\n";
 	cout << "rpy:   " << rpy << endl;
 	cout << "d_rpy: " << d_rpy << endl;
 	cout << "omega: " << omega << endl;
+	cout << "omegaGlob " << (R.mul(omega)) << endl;
+	cout << "Omega: " << Omega.evalf() << endl;
 	cout << "d_omega: " << d_omega << endl;
+	cout << "d_omegaGlob " << (R.mul(d_omega)) << endl;
 	cout << "R:     " << R << endl;
 	cout << "d_R:   " << d_R << endl;
 	cout << "dd_R:   " << dd_R << endl;
@@ -1096,6 +1098,7 @@ int main() {
 	cout << "d_Omega:   " << d_Omega << endl;
 	cout << "u_thrust:   " << u_thrust << endl;
 	cout << "u_torque:   " << u_torque << endl;
+	cout << "torqGlob " << (R.mul(u_torque)) << endl;
 
 	
 	// Checking that the system equations are the inverse of the endogenous: done
@@ -1103,33 +1106,20 @@ int main() {
 	ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
 	ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
 
-	cout << "\nFrom inputs u_* back to dynamics: " << endl;
+	cout << "From inputs u_* back to dynamics: " << endl;
 	cout << "accel: " << accel << endl;	
 	cout << "angAcc: " << angAcc << endl << endl;
 
 
-	// Checking euler diff <-> angVel conversion: done
-	matrix rpyRate = omega2rpyRate(omega, rpy);
-	matrix omega2 = rpyRate2omega(rpyRate, rpy);
+	// checking angular velocity consistency
+	cout << "omega in v0: " << state.p << ", " << state.q << ", " << state.r << endl;
+	matrix omegaP0 = ex_to<matrix>((R * omega).evalm());
+	cout << "omega in p0: " << omegaP0 << endl;
+	cout << "omega in v0: " << vectorVrepTransform(omegaP0) << endl;
 
-	cout << "omega -> rpyRate " << rpyRate << endl;
-	cout << "rpyRate -> omega2 " << omega2 << endl;
-
-	matrix pqr = {{state.p}, {state.q}, {state.r}};
-	matrix abg = {{state.a}, {state.b}, {state.g}};
-	matrix abgRate = omegaVrep2abgRate(pqr, abg);
-	cout << "pqr " << pqr << endl;
-	cout << "pqr -> abgRate " << abgRate << endl;
-	cout << "abgRate -> pqr2 " << abgRate2omegaVrep(abgRate, abg) << endl;
-
-
-	// changing torque reference frame
-	matrix torGlobal = R.mul(u_torque);
-	matrix torGlobalV = vectorVrepTransform(torGlobal);
-
-	cout << "u_torque:   " << u_torque << endl;
-	cout << "u_torque global " << torGlobalV << endl;
-
-
-	cout << "RR: " << abg2matrix(matrix{{Sx},{Sy},{Sz}}) << endl;
+	// Checking rpy,abg etc
+	symbol Sr("r"),Sp("p"),Sy("y");
+	symbol Sa("a"),Sb("b"),Sg("g");
+	ex Rrpy = rpy2matrix(matrix({{Sr},{Sp},{Sy}})).evalm();
+	ex Rabg = (Rpv * Rrpy * Rpv).evalm();
 }
