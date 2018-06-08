@@ -5,12 +5,12 @@
 
 #define DEBUG
 #define DEBUG_PRINT_INIT
-#define DEBUG_PRINT_FLAT_OUTPUTS
+// #define DEBUG_PRINT_FLAT_OUTPUTS
 #define DEBUG_PRINT_INPUTS
 
 
 #define CONCAT(x,y,z) x y z
-#define strConCat(x,y,z)    CONCAT(x,y,z)
+#define strConCat(x,y,z)	CONCAT(x,y,z)
 #define EX_TO_DOUBLE(x)	GiNaC::ex_to<numeric>(x).to_double()
 #define GINAC_3VEC(x) matrix({{x[0]}, {x[1]}, {x[2]}})
 
@@ -26,14 +26,13 @@ bool cln::cl_inhibit_floating_point_underflow = true; // no underflow exception
 /***
  * Globals
  ***/
-int quadcopterH = -1;
+int quadcopterH = -1;				// vrep handle
 unsigned nVars = 0;					// The number of lines in the vector field file
 
 // dynamic properties
 float mass = 0;
 matrix J_inertia = {{1,0,0},{0,1,0},{0,0,1}};
 const float GRAVITY_G = 9.80655;
-
 
 
 /***
@@ -58,7 +57,7 @@ struct State {
  * Symbolic equation, computed at initialization
  ***/
 symbol Sx("x"), Sy("y"), Sz("z"), Syaw("w");	// the variables (flat outputs)
-symbol St("t"); 		// Time is implicit in all variables
+symbol St("t");			// Time is implicit in all variables
 
 // All these quantities are in rpy paper convention
 struct {
@@ -66,8 +65,8 @@ struct {
 	ex theta;			// Rotation about y
 	ex psi;				// Rotation about z
 	ex d_phi;			// ^ deriv
-	ex d_theta; 		// ^ deriv
-	ex d_psi;   		// ^ deriv
+	ex d_theta;			// ^ deriv
+	ex d_psi;			// ^ deriv
 	matrix omega;		// Angular vel in body frame
 	matrix d_omega;		// ^ deriv
 	matrix u_torque;	// Control input: torque in x,y,z
@@ -87,9 +86,10 @@ matrix flatOut_D4;
 // Debug variables for integration
 const float dt = 0.005;
 TinyIntegrator linVelInt("(paper) Linear veocity", dt),	// 3x1 vector
-			   linPosInt("(paper) Position", dt),       // 3x1 vector
-			   d_RInt("(paper) d_R", dt),               // 3x3 matrix
-			   RInt("(paper) R", dt);                   // 3x3 matrix
+			   linPosInt("(paper) Position", dt),		// 3x1 vector
+			   d_RInt("(paper) d_R", dt),				// 3x3 matrix
+			   RInt("(paper) R", dt);					// 3x3 matrix
+simFloat oldVrepMatrix[12];
 
 
 /*
@@ -98,7 +98,7 @@ TinyIntegrator linVelInt("(paper) Linear veocity", dt),	// 3x1 vector
 
 // forward declaration
 void updateState(Inputs &inputs, State &state, double x, double y, double z,
-        double a, double b, double g);
+		double a, double b, double g);
 
 /*
  Declare symbolic functions for Ginac authomatic differentiation
@@ -129,7 +129,7 @@ static ex diff_symF(const ex &var, const ex &nDiff, const ex &t, unsigned diff_p
 static ex eval_symF(const ex &var, const ex &nDiff, const ex &t) {
 
 	// NOTE: the first two ifs should never happen; not well tested.
-	// 	How to derive the last flat outputs if the field is unspecified for them?
+	//	How to derive the last flat outputs if the field is unspecified for them?
 	
 	// Simplify symbolic equations if the vector field do not specifies z or yaw
 	if (var.is_equal(Sz) && nVars < 3 && nDiff > 0) {
@@ -188,13 +188,13 @@ static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
 #define LUA_UPDATE_COMMAND "simExtSymDeriv_update"
 
 const int inArgs_INIT[]={
-    3,
+	3,
 	sim_script_arg_string,1,
 	sim_script_arg_double,1,
 	sim_script_arg_table | sim_script_arg_double,9,
 };
 const int inArgs_UPDATE[]={
-    2,
+	2,
 	sim_script_arg_table | sim_script_arg_double,3,
 	sim_script_arg_table | sim_script_arg_double,3,
 };
@@ -202,12 +202,12 @@ const int inArgs_UPDATE[]={
 
 void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 { 
-    CScriptFunctionData D;
+	CScriptFunctionData D;
 	int ret = false;
-    if (D.readDataFromStack(cb->stackID,inArgs_INIT,inArgs_INIT[0],LUA_INIT_COMMAND))
-    {
+	if (D.readDataFromStack(cb->stackID,inArgs_INIT,inArgs_INIT[0],LUA_INIT_COMMAND))
+	{
 		// fileName
-        std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
+		std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
 		string fileName = inData->at(0).stringData[0];
 
 		// mass
@@ -222,20 +222,20 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 
 		// call
 		ret = initField(fileName, true);
-    }
-    D.pushOutData(CScriptFunctionDataItem(ret));
-    D.writeDataToStack(cb->stackID);
+	}
+	D.pushOutData(CScriptFunctionDataItem(ret));
+	D.writeDataToStack(cb->stackID);
 }
 
  
 
 void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 { 
-    CScriptFunctionData D;
+	CScriptFunctionData D;
 	Inputs inputs;
-    if (D.readDataFromStack(cb->stackID,inArgs_UPDATE,inArgs_UPDATE[0],LUA_UPDATE_COMMAND))
-    {
-        std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
+	if (D.readDataFromStack(cb->stackID,inArgs_UPDATE,inArgs_UPDATE[0],LUA_UPDATE_COMMAND))
+	{
+		std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
 		double x = inData->at(0).doubleData[0];
 		double y = inData->at(0).doubleData[1];
 		double z = inData->at(0).doubleData[2];
@@ -244,16 +244,16 @@ void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 		double g = inData->at(1).doubleData[2];
 
 		// call
-	    State state;
+		State state;
 		updateState(inputs, state, x, y, z, a, b, g);
 
-    }
+	}
 	// return quadrotor inputs
-    D.pushOutData(CScriptFunctionDataItem(inputs.fz));
-    D.pushOutData(CScriptFunctionDataItem(inputs.tx));
-    D.pushOutData(CScriptFunctionDataItem(inputs.ty));
-    D.pushOutData(CScriptFunctionDataItem(inputs.tz));
-    D.writeDataToStack(cb->stackID);
+	D.pushOutData(CScriptFunctionDataItem(inputs.fz));
+	D.pushOutData(CScriptFunctionDataItem(inputs.tx));
+	D.pushOutData(CScriptFunctionDataItem(inputs.ty));
+	D.pushOutData(CScriptFunctionDataItem(inputs.tz));
+	D.writeDataToStack(cb->stackID);
 }
 // --------------------------------------------------------------------------------------
 
@@ -362,7 +362,7 @@ matrix rpyRate2omega(matrix rpyRate, matrix rpy) {
 		{ 0, -sin(rpy(0,0)), cos(rpy(0,0))*cos(rpy(1,0))}};
 
 // This is the standart T to get omega in fixed frame, using the upper version
-// 	to get omega in body frame
+//	to get omega in body frame
 //		{ cos(rpy(2,0))*cos(rpy(1,0)), -sin(rpy(2,0)), 0 },
 //		{ sin(rpy(2,0))*cos(rpy(1,0)), cos(rpy(2,0)), 0 },
 //		{ -sin(rpy(1,0)), 0, 1 }};
@@ -380,18 +380,23 @@ matrix omegaVrep2abgRate(matrix angVelVrep, matrix abg) {
 
 	matrix TInv = {
 		{ 1, (sin(a)*sin(b))/cos(b), -(cos(a)*sin(b))/cos(b)},
-		{ 0,                 cos(a),                  sin(a)},
-		{ 0,         -sin(a)/cos(b),           cos(a)/cos(b)}
+		{ 0,				 cos(a),				  sin(a)},
+		{ 0,		 -sin(a)/cos(b),		   cos(a)/cos(b)}
 	};
-
-	/*		This is the old T
-	// No need of changing ref: all in vrep convention
-	
-	matrix TInv = {
-		{ cos(abg(2,0))/cos(abg(1,0)), -sin(abg(2,0))/cos(abg(1,0)), 0},
-		{ sin(abg(2,0)), cos(abg(2,0)), 0},
-		{ -(cos(abg(2,0))*sin(abg(1,0)))/cos(abg(1,0)), (sin(abg(1,0))*sin(abg(2,0)))/cos(abg(1,0)), 1}};
-	*/
+/*
+ *
+ *	  // This is the matrix for omega in vrep body frame
+ *
+ *	  ex b = abg(1,0);
+ *	  ex g = abg(2,0);
+ *
+ *	  matrix TInv = {
+ *		  {			  cos(g)/cos(b),		 -sin(g)/cos(b), 0},
+ *		  {					 sin(g),				 cos(g), 0},
+ *		  { -(cos(g)*sin(b))/cos(b), (sin(b)*sin(g))/cos(b), 1}
+ *	  };
+ *
+ */
 
 	return TInv.mul(angVelVrep);
 
@@ -406,20 +411,24 @@ matrix abgRate2omegaVrep(matrix abgRate, matrix abg) {
 	ex b = abg(1,0);
 
 	matrix T = {
-		{ 1,      0,		 sin(b) },
+		{ 1,	  0,		 sin(b) },
 		{ 0, cos(a), -cos(b)*sin(a) },
 		{ 0, sin(a),  cos(a)*cos(b) }
 	};
 
-	/*		This is the old T
-	// No need of changing ref: all in vrep convention
-
-	matrix T = {
-		{ cos(abg(1,0))*cos(abg(2,0)), sin(abg(2,0)), 0},
-		{ -cos(abg(1,0))*sin(abg(2,0)), cos(abg(2,0)), 0},
-		{ sin(abg(1,0)), 0, 1}};
-	*/
-
+/*
+ *	  // This is the matrix for omega in vrep body frame
+ *
+ *	  ex b = abg(1,0);
+ *	  ex g = abg(2,0);
+ *
+ *	  matrix T = {
+ *		  { cos(b)*cos(g), sin(g), 0},
+ *		  {-cos(b)*sin(g), cos(g), 0},
+ *		  { sin(b)		 ,		0, 1}
+ *	  };
+ *
+ */
 	return T.mul(abgRate);
 
 }
@@ -427,9 +436,9 @@ matrix abgRate2omegaVrep(matrix abgRate, matrix abg) {
 
 // given the vector of the variables, the symbolic vector src in inputs
 // computes the next derivative through dv/dt = J_v(x) * dx/dt
-//  NOTE: This is different from the reference paper! They wrote dv/dt = J_v(x) * v
+//	NOTE: This is different from the reference paper! They wrote dv/dt = J_v(x) * v
 void genNextDerivative(const vector <symbol> vars, const matrix& src,
-        const matrix& dx, matrix& dest) {
+		const matrix& dx, matrix& dest) {
 
 	unsigned nVars = vars.size();
 	matrix jacob(nVars, nVars);
@@ -529,8 +538,10 @@ void genSymbolicEquations(void) {
 	equations.d_phi = equations.phi.diff(St);
 	equations.d_theta = equations.theta.diff(St);
 	equations.d_psi = equations.psi.diff(St);
+			// NOTE: ^ we shouldn't diff this but get from omega (ok for now:
+			// small angles assumption)
 
-		// Euler rates rpy to angular velocity (remeber: the result is omega in local frame)
+	// Euler rates rpy to angular velocity (remeber: the result is omega in local frame)
 	equations.omega = rpyRate2omega(matrix({{equations.d_phi},{equations.d_theta},{equations.d_psi}}),
 			matrix({{equations.phi},{equations.theta},{equations.psi}}));
 
@@ -583,19 +594,32 @@ void setVrepInitialState(void) {
 
 	// TODO: make the name of the shape parametric
 
-    // Get the initial pose of the quadcopter shape in the vrep scene
-    quadcopterH = simGetObjectHandle("Quadricopter");
+	// Get the initial pose of the quadcopter shape in the vrep scene
+	quadcopterH = simGetObjectHandle("Quadricopter");
 	float initVrepPos[3];
 	float initVrepAbg[3];
 	simGetObjectOrientation(quadcopterH, -1, initVrepAbg);
 	simGetObjectPosition(quadcopterH, -1, initVrepPos);
 
 	// Compute a configuration in the field
-    Inputs inputs;
-    State state;
-    updateState(inputs, state, initVrepPos[0], initVrepPos[1], initVrepPos[2], initVrepAbg[0], initVrepAbg[1], initVrepAbg[2]);
-        // NOTE: arg 8 is the 4-th flat output. 6-7 args can be different from state.a,state.b
+	Inputs inputs;
+	State state;
+	updateState(inputs, state, initVrepPos[0], initVrepPos[1], initVrepPos[2], initVrepAbg[0], initVrepAbg[1], initVrepAbg[2]);
+		// NOTE: arg 8 is the 4-th flat output. 6-7 args can be different from state.a,state.b
 	
+
+	// This section computes R_t1 from the continuous derivative of R_t0
+	// Then, it extracts abg from the delta transformation as needed by the 
+	// sim_shapefloatparam_init_velocity_{a,b,g} parameters
+	matrix R_t0 = ex_to<matrix>(equations.R.evalf());
+	matrix d_R_t0 = ex_to<matrix>(equations.d_R.evalf());
+	ex R_t1 = R_t0 + d_R_t0 * dt;
+	ex R_t0t1 = R_t0.transpose() * R_t1;		// delta R
+	matrix mR_t0t1 = ex_to<matrix>(R_t0t1.evalm());
+	matrix vrep_R_t0t1 = matrixVrepTransform(mR_t0t1);	// applied here or to R_t{1,0} it's the same
+	matrix abg_t0t1 = matrix2abg(vrep_R_t0t1);
+	matrix abg_rate = abg_t0t1.mul_scalar(1.0/dt);
+
 	// Set the vrep state
 	const float abg[] = {(float)state.a, (float)state.b, (float)state.g};
 	simSetObjectOrientation(quadcopterH, -1, abg);
@@ -604,11 +628,9 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_y, (float)state.vy);
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_z, (float)state.vz);
 
-	matrix abgD1 = omegaVrep2abgRate(matrix({{state.p}, {state.q}, {state.r}}),
-			matrix({{state.a}, {state.b}, {state.g}}));
-	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a, EX_TO_DOUBLE(abgD1(0,0)));
-	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, EX_TO_DOUBLE(abgD1(1,0)));
-	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, EX_TO_DOUBLE(abgD1(2,0)));
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a, EX_TO_DOUBLE(abg_rate(0,0)));
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b, EX_TO_DOUBLE(abg_rate(1,0)));
+	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_g, EX_TO_DOUBLE(abg_rate(2,0)));
 
 	simResetDynamicObject(quadcopterH);
 
@@ -620,8 +642,9 @@ void setVrepInitialState(void) {
 	cout << "initPos " << initVrepPos[0] << ", " << initVrepPos[1] << ", " << initVrepPos[2] << endl;
 	cout << "initVel " << state.vx << ", " << state.vy << ", " << state.vz << endl;
 	cout << "abg " << abg[0] << ", " << abg[1] << ", " << abg[2] << endl;
-	cout << "Dabg " << abgD1 << endl;
+	cout << "Dabg set " << abg_rate << endl;
 	cout << "Other\n";
+	cout << "abgD1 " << omegaVrep2abgRate(matrix({{state.p}, {state.q}, {state.r}}), matrix({{state.a}, {state.b}, {state.g}})) << endl;
 	cout << "pqr " << matrix({{state.p}, {state.q}, {state.r}}) << endl << endl;
 #endif
 
@@ -636,6 +659,7 @@ void setVrepInitialState(void) {
 					{omegaF(2,0), 0, -omegaF(0,0)},
 					{-omegaF(1,0), omegaF(0,0), 0}};
 	d_RInt.setInitialState((equations.R.evalf() * Omega).evalm());	// d_R
+	// DEBUG: checking against integration if starting still
 		cout << "initInt: \n" << linVelInt << endl << d_RInt << endl << linPosInt << endl << RInt << endl << endl;
 #endif
 }
@@ -692,7 +716,7 @@ int initField(string fieldFilePath, bool vrepCaller) {
 	// Save equations to globals
 	genSymbolicEquations();
 
-    // Assigns initial config in vrep scene to match the vector field
+	// Assigns initial config in vrep scene to match the vector field
 	if (vrepCaller) {
 		setVrepInitialState();
 	}
@@ -722,8 +746,6 @@ void debugging(Inputs& inputs, State& state) {
 	matrix omega = {{Omega(2,1)},{-Omega(2,0)},{Omega(1,0)}};
 
 	// Back to accelerations
-	//ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
-	//ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
 	ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
 	ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
 	
@@ -731,12 +753,6 @@ void debugging(Inputs& inputs, State& state) {
 	matrix AngAcc = {{0, -angAccM(2,0), angAccM(1,0)},
 					{angAccM(2,0), 0, -angAccM(0,0)},
 					{-angAccM(1,0), angAccM(0,0), 0}};
-
-	// print
-	//cout << "Accel: " << accel << endl;
-	//cout << "AngAcc: " << angAcc << endl;
-	//cout << endl;
-
 
 	// Update state
 	linPosInt.update(linVelInt.get());
@@ -746,44 +762,75 @@ void debugging(Inputs& inputs, State& state) {
 	RInt.update(d_RInt.get());
 
 	// >> End integration
+	
 
-
-	// compare estimated and real
-	//
-	// Estimated
+	// >> Compare estimated and real quantities
+	
+	// Estimated linear velocity
 	matrix vrepLinVel = matrix({{state.vx},{state.vy},{state.vz}});
-	matrix omegaVrep = matrix({{state.p}, {state.q}, {state.r}});
 
 	// Measured
 	float vrepLinVelF[3];
 	float vrepAbgVelF[3];
 	simGetVelocity(quadcopterH, vrepLinVelF, vrepAbgVelF);
-		// ATTENTION: this function returns as third arg the derivative of abg rate
+		// ATTENTION: at the first iteration, simGetVelocity returns just what
+		// was previously set with sim_shapefloatparam_init_velocity_{a,b,g}
+	
+	// Computing my own angular measure
+	simFloat vrepMatrix[12];
+	simFloat vrepAngVelAxis[3];
+	simFloat vrepAngle;
+	simGetObjectMatrix(quadcopterH, -1, vrepMatrix);
+	simGetRotationAxis(oldVrepMatrix, vrepMatrix, vrepAngVelAxis, &vrepAngle);
+	float vrepAngVelScalar = vrepAngle/dt;
+	matrix vrepAngVel = GINAC_3VEC(vrepAngVelAxis).mul_scalar(vrepAngVelScalar);
+	matrix angVel = vectorVrepTransform(vrepAngVel);
+	for (int i = 0; i < 12; ++i) { oldVrepMatrix[i] = vrepMatrix[i]; }
 
-	cout << "vrep est  linvel: " << vrepLinVel << endl;
-	cout << "vrep real linvel: " << GINAC_3VEC(vrepLinVelF) << endl;
+	matrix vrepOmega = vectorVrepTransform(ex_to<matrix>(equations.omega.evalf()));
+	matrix vrepOmega2 = ex_to<matrix>((vrepOmega.transpose() * vrepOmega).evalm());
+	ex vrepOmegaNorm = sqrt(vrepOmega2(0,0));
 
-	cout << "vrep est  abgvel: " << omegaVrep << endl;
-	cout << "vrep real abgvel: " << GINAC_3VEC(vrepAbgVelF) << endl << endl;
+	// cout << "vrep est  linvel:	" << vrepLinVel << endl;
+	// cout << "vrep real linvel:	" << GINAC_3VEC(vrepLinVelF) << endl;
+
+	cout << "vrep est  axis:   " << (vrepOmega/vrepOmegaNorm).evalm() << endl;
+	cout << "vrep real axis:   " << GINAC_3VEC(vrepAngVelAxis) << endl;
+	cout << "vrep est angvel:  " << vrepOmegaNorm << endl;
+	cout << "vrep real angvel: " << vrepAngVelScalar << endl;
+	cout << endl;
 
 
+	// do not set, just printing now
 /*
- *    // do not set, just printing now
- *    simSetObjectPosition(quadcopterH, -1,);
- *    simSetObjectOrientation(quadcopterH, -1,);
+ *    // Vrep convention
+ *    matrix vrepLinPos = vectorVrepTransform(linPosInt.getMat());
+ *    float vrepLinPosF[3];
+ *    vrepLinPosF[0] = EX_TO_DOUBLE(vrepLinPos(0,0));
+ *    vrepLinPosF[1] = EX_TO_DOUBLE(vrepLinPos(1,0));
+ *    vrepLinPosF[2] = EX_TO_DOUBLE(vrepLinPos(2,0));
  *
- *    // debug: off motors
- *    inputs.fz = 0;
- *    inputs.tx = 0;
- *    inputs.ty = 0;
- *    inputs.tz = 0;
+ *    matrix vrepAbgPos = matrix2abg(matrixVrepTransform(RInt.getMat()));
+ *    float vrepAbgPosF[3];
+ *    vrepAbgPosF[0] = EX_TO_DOUBLE(vrepAbgPos(0,0));
+ *    vrepAbgPosF[1] = EX_TO_DOUBLE(vrepAbgPos(1,0));
+ *    vrepAbgPosF[2] = EX_TO_DOUBLE(vrepAbgPos(2,0));
+ *
+ *	  simSetObjectPosition(quadcopterH, -1, vrepLinPosF);
+ *	  simSetObjectOrientation(quadcopterH, -1, vrepAbgPosF);
+ *
+ *	  // debug: off motors
+ *	  inputs.fz = 0;
+ *	  inputs.tx = 0;
+ *	  inputs.ty = 0;
+ *	  inputs.tz = 0;
  */
 }
 
 
 // The registered vrep function for evaluating the inputs
 void updateState(Inputs &inputs, State &state, double x, double y, double z,
-        double a, double b, double g) {
+		double a, double b, double g) {
 
 	// Pass from the v-rep axis convention to reference paper conv. (z downwards)
 	matrix vTemp = vectorVrepTransform(matrix({{x}, {y}, {z}}));
@@ -791,7 +838,7 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	y = EX_TO_DOUBLE(vTemp(1,0));
 	z = EX_TO_DOUBLE(vTemp(2,0));
 
-    matrix Rvrep = abg2matrix(matrix({{a}, {b}, {g}}));
+	matrix Rvrep = abg2matrix(matrix({{a}, {b}, {g}}));
 	matrix Rpaper = matrixVrepTransform(Rvrep);
 	matrix rpy = matrix2rpy(Rpaper);
 	double yaw = EX_TO_DOUBLE(rpy(2,0));
@@ -852,182 +899,182 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 // This is the plugin start routine (called just once, just after the plugin was loaded):
 VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
 {
-    // Dynamically load and bind V-REP functions:
-    // 1. Figure out this plugin's directory:
-    char curDirAndFile[1024];
+	// Dynamically load and bind V-REP functions:
+	// 1. Figure out this plugin's directory:
+	char curDirAndFile[1024];
 #ifdef _WIN32
-    #ifdef QT_COMPIL
-        _getcwd(curDirAndFile, sizeof(curDirAndFile));
-    #else
-        GetModuleFileName(NULL,curDirAndFile,1023);
-        PathRemoveFileSpec(curDirAndFile);
-    #endif
+	#ifdef QT_COMPIL
+		_getcwd(curDirAndFile, sizeof(curDirAndFile));
+	#else
+		GetModuleFileName(NULL,curDirAndFile,1023);
+		PathRemoveFileSpec(curDirAndFile);
+	#endif
 #else
-    getcwd(curDirAndFile, sizeof(curDirAndFile));
+	getcwd(curDirAndFile, sizeof(curDirAndFile));
 #endif
 
-    std::string currentDirAndPath(curDirAndFile);
-    // 2. Append the V-REP library's name:
-    std::string temp(currentDirAndPath);
+	std::string currentDirAndPath(curDirAndFile);
+	// 2. Append the V-REP library's name:
+	std::string temp(currentDirAndPath);
 #ifdef _WIN32
-    temp+="\\v_rep.dll";
+	temp+="\\v_rep.dll";
 #elif defined (__linux)
-    temp+="/libv_rep.so";
+	temp+="/libv_rep.so";
 #elif defined (__APPLE__)
-    temp+="/libv_rep.dylib";
+	temp+="/libv_rep.dylib";
 #endif /* __linux || __APPLE__ */
-    // 3. Load the V-REP library:
-    vrepLib=loadVrepLibrary(temp.c_str());
-    if (vrepLib==NULL)
-    {
-        std::cout << "Error, could not find or correctly load the V-REP library. Cannot start 'PluginSkeleton' plugin.\n";
-        return(0); // Means error, V-REP will unload this plugin
-    }
-    if (getVrepProcAddresses(vrepLib)==0)
-    {
-        std::cout << "Error, could not find all required functions in the V-REP library. Cannot start 'PluginSkeleton' plugin.\n";
-        unloadVrepLibrary(vrepLib);
-        return(0); // Means error, V-REP will unload this plugin
-    }
+	// 3. Load the V-REP library:
+	vrepLib=loadVrepLibrary(temp.c_str());
+	if (vrepLib==NULL)
+	{
+		std::cout << "Error, could not find or correctly load the V-REP library. Cannot start 'PluginSkeleton' plugin.\n";
+		return(0); // Means error, V-REP will unload this plugin
+	}
+	if (getVrepProcAddresses(vrepLib)==0)
+	{
+		std::cout << "Error, could not find all required functions in the V-REP library. Cannot start 'PluginSkeleton' plugin.\n";
+		unloadVrepLibrary(vrepLib);
+		return(0); // Means error, V-REP will unload this plugin
+	}
 
-    // Check the version of V-REP:
-    int vrepVer;
-    simGetIntegerParameter(sim_intparam_program_version,&vrepVer);
-    if (vrepVer<30200) // if V-REP version is smaller than 3.02.00
-    {
-        std::cout << "Sorry, your V-REP copy is somewhat old. Cannot start 'PluginSkeleton' plugin.\n";
-        unloadVrepLibrary(vrepLib);
-        return(0); // Means error, V-REP will unload this plugin
-    }
+	// Check the version of V-REP:
+	int vrepVer;
+	simGetIntegerParameter(sim_intparam_program_version,&vrepVer);
+	if (vrepVer<30200) // if V-REP version is smaller than 3.02.00
+	{
+		std::cout << "Sorry, your V-REP copy is somewhat old. Cannot start 'PluginSkeleton' plugin.\n";
+		unloadVrepLibrary(vrepLib);
+		return(0); // Means error, V-REP will unload this plugin
+	}
 
-    // Register the lua commands
-    simRegisterScriptCallbackFunction(strConCat(LUA_INIT_COMMAND,"@","SymDeriv"),
+	// Register the lua commands
+	simRegisterScriptCallbackFunction(strConCat(LUA_INIT_COMMAND,"@","SymDeriv"),
 			strConCat("number ok = ",LUA_INIT_COMMAND,"(string filePath, number mass, table9 inertia_matrix)"),LUA_INIT_CALLBACK);
 
-    simRegisterScriptCallbackFunction(strConCat(LUA_UPDATE_COMMAND,"@","SymDeriv"),
+	simRegisterScriptCallbackFunction(strConCat(LUA_UPDATE_COMMAND,"@","SymDeriv"),
 			strConCat("",LUA_UPDATE_COMMAND,"(number x, number y, number z, number yaw)"),LUA_UPDATE_CALLBACK);
 
 
-    return(PLUGIN_VERSION); // initialization went fine, we return the version number of this plugin (can be queried with simGetModuleName)
+	return(PLUGIN_VERSION); // initialization went fine, we return the version number of this plugin (can be queried with simGetModuleName)
 }
 
 // This is the plugin end routine (called just once, when V-REP is ending, i.e. releasing this plugin):
 VREP_DLLEXPORT void v_repEnd()
 {
-    // Here you could handle various clean-up tasks
+	// Here you could handle various clean-up tasks
 
-    unloadVrepLibrary(vrepLib); // release the library
+	unloadVrepLibrary(vrepLib); // release the library
 }
 
 // This is the plugin messaging routine (i.e. V-REP calls this function very often, with various messages):
 VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customData,int* replyData)
 { // This is called quite often. Just watch out for messages/events you want to handle
-    // Keep following 5 lines at the beginning and unchanged:
-    static bool refreshDlgFlag=true;
-    int errorModeSaved;
-    simGetIntegerParameter(sim_intparam_error_report_mode,&errorModeSaved);
-    simSetIntegerParameter(sim_intparam_error_report_mode,sim_api_errormessage_ignore);
-    void* retVal=NULL;
+	// Keep following 5 lines at the beginning and unchanged:
+	static bool refreshDlgFlag=true;
+	int errorModeSaved;
+	simGetIntegerParameter(sim_intparam_error_report_mode,&errorModeSaved);
+	simSetIntegerParameter(sim_intparam_error_report_mode,sim_api_errormessage_ignore);
+	void* retVal=NULL;
 
-    // Here we can intercept many messages from V-REP (actually callbacks). Only the most important messages are listed here.
-    // For a complete list of messages that you can intercept/react with, search for "sim_message_eventcallback"-type constants
-    // in the V-REP user manual.
+	// Here we can intercept many messages from V-REP (actually callbacks). Only the most important messages are listed here.
+	// For a complete list of messages that you can intercept/react with, search for "sim_message_eventcallback"-type constants
+	// in the V-REP user manual.
 
-    if (message==sim_message_eventcallback_refreshdialogs)
-        refreshDlgFlag=true; // V-REP dialogs were refreshed. Maybe a good idea to refresh this plugin's dialog too
+	if (message==sim_message_eventcallback_refreshdialogs)
+		refreshDlgFlag=true; // V-REP dialogs were refreshed. Maybe a good idea to refresh this plugin's dialog too
 
-    if (message==sim_message_eventcallback_menuitemselected)
-    { // A custom menu bar entry was selected..
-        // here you could make a plugin's main dialog visible/invisible
-    }
+	if (message==sim_message_eventcallback_menuitemselected)
+	{ // A custom menu bar entry was selected..
+		// here you could make a plugin's main dialog visible/invisible
+	}
 
-    if (message==sim_message_eventcallback_instancepass)
-    {   // This message is sent each time the scene was rendered (well, shortly after) (very often)
-        // It is important to always correctly react to events in V-REP. This message is the most convenient way to do so:
+	if (message==sim_message_eventcallback_instancepass)
+	{	// This message is sent each time the scene was rendered (well, shortly after) (very often)
+		// It is important to always correctly react to events in V-REP. This message is the most convenient way to do so:
 
-        int flags=auxiliaryData[0];
-        bool sceneContentChanged=((flags&(1+2+4+8+16+32+64+256))!=0); // object erased, created, model or scene loaded, und/redo called, instance switched, or object scaled since last sim_message_eventcallback_instancepass message 
-        bool instanceSwitched=((flags&64)!=0);
+		int flags=auxiliaryData[0];
+		bool sceneContentChanged=((flags&(1+2+4+8+16+32+64+256))!=0); // object erased, created, model or scene loaded, und/redo called, instance switched, or object scaled since last sim_message_eventcallback_instancepass message 
+		bool instanceSwitched=((flags&64)!=0);
 
-        if (instanceSwitched)
-        {
-            // React to an instance switch here!!
-        }
+		if (instanceSwitched)
+		{
+			// React to an instance switch here!!
+		}
 
-        if (sceneContentChanged)
-        { // we actualize plugin objects for changes in the scene
+		if (sceneContentChanged)
+		{ // we actualize plugin objects for changes in the scene
 
-            //...
+			//...
 
-            refreshDlgFlag=true; // always a good idea to trigger a refresh of this plugin's dialog here
-        }
-    }
+			refreshDlgFlag=true; // always a good idea to trigger a refresh of this plugin's dialog here
+		}
+	}
 
-    if (message==sim_message_eventcallback_mainscriptabouttobecalled)
-    { // The main script is about to be run (only called while a simulation is running (and not paused!))
-        
-    }
+	if (message==sim_message_eventcallback_mainscriptabouttobecalled)
+	{ // The main script is about to be run (only called while a simulation is running (and not paused!))
+		
+	}
 
-    if (message==sim_message_eventcallback_simulationabouttostart)
-    { // Simulation is about to start
+	if (message==sim_message_eventcallback_simulationabouttostart)
+	{ // Simulation is about to start
 
-    }
+	}
 
-    if (message==sim_message_eventcallback_simulationended)
-    { // Simulation just ended
+	if (message==sim_message_eventcallback_simulationended)
+	{ // Simulation just ended
 
-    }
+	}
 
-    if (message==sim_message_eventcallback_moduleopen)
-    { // A script called simOpenModule (by default the main script). Is only called during simulation.
-        //if ( (customData==NULL)||(_stricmp("PluginSkeleton",(char*)customData)==0) ) // is the command also meant for this plugin?
-        //{
-        //    // we arrive here only at the beginning of a simulation
-        //}
-    }
+	if (message==sim_message_eventcallback_moduleopen)
+	{ // A script called simOpenModule (by default the main script). Is only called during simulation.
+		//if ( (customData==NULL)||(_stricmp("PluginSkeleton",(char*)customData)==0) ) // is the command also meant for this plugin?
+		//{
+		//	  // we arrive here only at the beginning of a simulation
+		//}
+	}
 
-    if (message==sim_message_eventcallback_modulehandle)
-    { // A script called simHandleModule (by default the main script). Is only called during simulation.
-        //if ( (customData==NULL)||(_stricmp("PluginSkeleton",(char*)customData)==0) ) // is the command also meant for this plugin?
-        //{
-        //    // we arrive here only while a simulation is running
-        //}
-    }
+	if (message==sim_message_eventcallback_modulehandle)
+	{ // A script called simHandleModule (by default the main script). Is only called during simulation.
+		//if ( (customData==NULL)||(_stricmp("PluginSkeleton",(char*)customData)==0) ) // is the command also meant for this plugin?
+		//{
+		//	  // we arrive here only while a simulation is running
+		//}
+	}
 
-    if (message==sim_message_eventcallback_moduleclose)
-    { // A script called simCloseModule (by default the main script). Is only called during simulation.
-        //if ( (customData==NULL)||(_stricmp("PluginSkeleton",(char*)customData)==0) ) // is the command also meant for this plugin?
-        //{
-        //    // we arrive here only at the end of a simulation
-        //}
-    }
+	if (message==sim_message_eventcallback_moduleclose)
+	{ // A script called simCloseModule (by default the main script). Is only called during simulation.
+		//if ( (customData==NULL)||(_stricmp("PluginSkeleton",(char*)customData)==0) ) // is the command also meant for this plugin?
+		//{
+		//	  // we arrive here only at the end of a simulation
+		//}
+	}
 
-    if (message==sim_message_eventcallback_instanceswitch)
-    { // We switched to a different scene. Such a switch can only happen while simulation is not running
+	if (message==sim_message_eventcallback_instanceswitch)
+	{ // We switched to a different scene. Such a switch can only happen while simulation is not running
 
-    }
+	}
 
-    if (message==sim_message_eventcallback_broadcast)
-    { // Here we have a plugin that is broadcasting data (the broadcaster will also receive this data!)
+	if (message==sim_message_eventcallback_broadcast)
+	{ // Here we have a plugin that is broadcasting data (the broadcaster will also receive this data!)
 
-    }
+	}
 
-    if (message==sim_message_eventcallback_scenesave)
-    { // The scene is about to be saved. If required do some processing here (e.g. add custom scene data to be serialized with the scene)
+	if (message==sim_message_eventcallback_scenesave)
+	{ // The scene is about to be saved. If required do some processing here (e.g. add custom scene data to be serialized with the scene)
 
-    }
+	}
 
-    // You can add many more messages to handle here
+	// You can add many more messages to handle here
 
-    if ((message==sim_message_eventcallback_guipass)&&refreshDlgFlag)
-    { // handle refresh of the plugin's dialogs
-        // ...
-        refreshDlgFlag=false;
-    }
+	if ((message==sim_message_eventcallback_guipass)&&refreshDlgFlag)
+	{ // handle refresh of the plugin's dialogs
+		// ...
+		refreshDlgFlag=false;
+	}
 
-    // Keep following unchanged:
-    simSetIntegerParameter(sim_intparam_error_report_mode,errorModeSaved); // restore previous settings
-    return(retVal);
+	// Keep following unchanged:
+	simSetIntegerParameter(sim_intparam_error_report_mode,errorModeSaved); // restore previous settings
+	return(retVal);
 }
 
 
@@ -1084,20 +1131,20 @@ int main() {
 	matrix u_torque = ex_to<matrix>(equations.u_torque.evalf());
 	
 	cout << "Paper equations\n";
-	cout << "rpy:   " << rpy << endl;
+	cout << "rpy:	" << rpy << endl;
 	cout << "d_rpy: " << d_rpy << endl;
 	cout << "omega: " << omega << endl;
 	cout << "omegaGlob " << (R.mul(omega)) << endl;
 	cout << "Omega: " << Omega.evalf() << endl;
 	cout << "d_omega: " << d_omega << endl;
 	cout << "d_omegaGlob " << (R.mul(d_omega)) << endl;
-	cout << "R:     " << R << endl;
-	cout << "d_R:   " << d_R << endl;
-	cout << "dd_R:   " << dd_R << endl;
-	cout << "Omega:     " << Omega << endl;
-	cout << "d_Omega:   " << d_Omega << endl;
-	cout << "u_thrust:   " << u_thrust << endl;
-	cout << "u_torque:   " << u_torque << endl;
+	cout << "R:		" << R << endl;
+	cout << "d_R:	" << d_R << endl;
+	cout << "dd_R:	 " << dd_R << endl;
+	cout << "Omega:		" << Omega << endl;
+	cout << "d_Omega:	" << d_Omega << endl;
+	cout << "u_thrust:	 " << u_thrust << endl;
+	cout << "u_torque:	 " << u_torque << endl;
 	cout << "torqGlob " << (R.mul(u_torque)) << endl;
 
 	
@@ -1116,10 +1163,4 @@ int main() {
 	matrix omegaP0 = ex_to<matrix>((R * omega).evalm());
 	cout << "omega in p0: " << omegaP0 << endl;
 	cout << "omega in v0: " << vectorVrepTransform(omegaP0) << endl;
-
-	// Checking rpy,abg etc
-	symbol Sr("r"),Sp("p"),Sy("y");
-	symbol Sa("a"),Sb("b"),Sg("g");
-	ex Rrpy = rpy2matrix(matrix({{Sr},{Sp},{Sy}})).evalm();
-	ex Rabg = (Rpv * Rrpy * Rpv).evalm();
 }

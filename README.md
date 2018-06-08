@@ -26,3 +26,4 @@ Dingjiang Zhou and Mac Schwager
 * The plugin has been written for V-REP 3.4.0. A newer API might require
 		minor changes in the code.
 * Euler angles singularity at 90° pitch
+* Tested with Vortex
