@@ -294,6 +294,16 @@ matrix floats2matrix(const float f[12]) {
 }
 
 
+matrix vector2skewSymm(const matrix& vec) {
+
+	matrix m = {{0, -vec(2,0), vec(1,0)},
+			{vec(2,0), 0, -vec(0,0)},
+			{-vec(1,0), vec(0,0), 0}};
+
+	return m;
+}
+
+
 matrix vectorVrepTransform(const matrix& vec) {
 
 	// NOTE: this must be coherent with vectorVrepR()
@@ -551,9 +561,14 @@ void flatOutputs2inputs(Inputs &inputs) {
 
 	// body -> fixed -> fixedVrep -> bodyVrep
 	matrix R = ex_to<matrix>(equations.R.evalf());
-	ex u_torqueGlobal = R * u_torqueF;
-	ex u_torqueGlobalVrepE = vectorVrepTransform(ex_to<matrix>(u_torqueGlobal.evalm()));
-	matrix u_torqueVrepF = ex_to<matrix>(u_torqueGlobalVrepE.evalm());
+	//ex u_torqueGlobal = R * u_torqueF;
+	//ex u_torqueGlobalVrepE = vectorVrepTransform(ex_to<matrix>(u_torqueGlobal.evalm()));
+	//
+	
+	matrix Rvrep = matrixVrepTransform(R);
+	ex u_torqueGlobalVrep = Rvrep * vectorVrepTransform(u_torqueF);
+
+	matrix u_torqueVrepF = ex_to<matrix>(u_torqueGlobalVrep.evalm());
 
 
 	inputs.tx = EX_TO_DOUBLE(u_torqueVrepF(0,0));
@@ -581,8 +596,6 @@ void genSymbolicEquations(void) {
 	equations.d_phi = equations.phi.diff(St);
 	equations.d_theta = equations.theta.diff(St);
 	equations.d_psi = equations.psi.diff(St);
-			// NOTE: ^ we shouldn't diff this but get from omega (ok for now:
-			// small angles assumption)
 
 	// Euler rates rpy to angular velocity (remeber: the result is omega in local frame)
 	equations.omega = rpyRate2omega(matrix({{equations.d_phi},{equations.d_theta},{equations.d_psi}}),
@@ -877,13 +890,6 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	matrix Rpaper = matrixVrepTransform(Rvrep);
 	matrix rpy = matrix2rpy(Rpaper);
 	double yaw = EX_TO_DOUBLE(rpy(2,0));
-
-	// debug
-	/*
-	cout << "updateState()\n";
-	cout << "abg " << matrix({{a}, {b}, {g}}) << endl;
-	cout << "rpy " << rpy << endl;
-	*/
 
 	// Evaluate the D4 vectors numerically
 	exmap symMap;
@@ -1199,10 +1205,45 @@ int main() {
 	cout << "accel: " << accel << endl;	
 	cout << "angAcc: " << angAcc << endl << endl;
 
+	// Vrep convention
+	matrix Rvrep = matrixVrepTransform(R);
+	matrix abg = matrix2abg(Rvrep);
+	matrix Rpv = vectorVrepR();
+	ex omegaGlobalVrep = (Rpv * R * omega).evalm();
+	ex omegaGlobalVrep2 = (Rvrep * Rpv * omega).evalm();
+	ex torqueGlobalVrep = (Rpv * R * u_torque).evalm();
+	ex torqueGlobalVrep2 = (Rvrep * Rpv * u_torque).evalm();
+	cout << "Vrep global\n";
+	cout << "Rvrep " << Rvrep << endl;
+	cout << "abg " << abg << endl;
+	cout << "omegaGlobalVrep " << omegaGlobalVrep << endl;
+	cout << "torqueGlobalVrep " << torqueGlobalVrep << endl;
+	cout << endl;
 
-	// checking angular velocity consistency
-	cout << "omega in v0: " << state.p << ", " << state.q << ", " << state.r << endl;
-	matrix omegaP0 = ex_to<matrix>((R * omega).evalm());
-	cout << "omega in p0: " << omegaP0 << endl;
-	cout << "omega in v0: " << vectorVrepTransform(omegaP0) << endl;
+	// Newton euler in vrep global frame
+	matrix JGlobalVrep = ex_to<matrix>((Rvrep * J_inertia * Rvrep.transpose()).evalm());
+	matrix OmegaGlobalVrep = vector2skewSymm(ex_to<matrix>(omegaGlobalVrep));
+	ex angAccGlobalVrep = (JGlobalVrep.inverse() * (torqueGlobalVrep
+				- OmegaGlobalVrep * JGlobalVrep * omegaGlobalVrep)).evalm();
+	cout << "angAccGlobalVrep : " << angAccGlobalVrep << endl;
+	cout << "Rpv*R*angAcc : " << (Rpv * R * angAcc).evalm() << endl;
+	cout << endl;
+
+	// Newton euler in vrep local frame
+	matrix JLocalVrep = ex_to<matrix>((Rpv * J_inertia * Rpv).evalm()); // just the same as J_inertia
+	ex omegaLocalVrep = (Rpv * omega).evalm();
+	ex omegaLocalVrep2 = (Rvrep.transpose() * omegaGlobalVrep).evalm();
+	ex torqueLocalVrep = (Rpv * u_torque).evalm();
+	ex torqueLocalVrep2 = (Rvrep.transpose() * torqueGlobalVrep).evalm();
+	matrix omegaLocalVrepM = ex_to<matrix>(omegaLocalVrep);
+	matrix OmegaLocalVrep = vector2skewSymm(ex_to<matrix>(omegaLocalVrep));
+	ex angAccLocalVrep = (JLocalVrep.inverse() * (torqueLocalVrep
+				- OmegaLocalVrep * JLocalVrep * omegaLocalVrep)).evalm();
+	cout << "Vrep local\n";
+	cout << "omegaLocalVrep " << omegaLocalVrep << endl;
+	cout << "torqueLocalVrep " << torqueLocalVrep << endl;
+	cout << endl;
+	cout << "angAccLocalVrep " << angAccLocalVrep << endl;
+	cout << "Rpv*angAcc : " << angAccLocalVrep << endl;
+	cout << endl;
 }
