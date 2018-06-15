@@ -4,10 +4,11 @@
 
 
 #define DEBUG
-#define DEBUG_PRINT_INIT
+// #define DEBUG_PRINT_INIT
 // #define DEBUG_PRINT_FLAT_OUTPUTS
-#define DEBUG_PRINT_INPUTS
-// #define DEBUG_SET_INTEGRATION
+// #define DEBUG_PRINT_INPUTS
+// #define DEBUG_PRINT_DEBUG
+#define DEBUG_SET_INTEGRATION
 
 
 #define CONCAT(x,y,z) x y z
@@ -34,8 +35,7 @@ unsigned nVars = 0;					// The number of lines in the vector field file
 // dynamic properties
 float mass = 0;
 matrix J_inertia = {{1,0,0},{0,1,0},{0,0,1}};
-//const float GRAVITY_G = 9.80655;
-const float GRAVITY_G = 2;
+const float GRAVITY_G = 9.80655;
 
 
 /***
@@ -87,7 +87,7 @@ matrix flatOut_D4;
 
 
 // Debug variables for integration
-const float dt = 0.005;
+const float dt = 0.001;
 TinyIntegrator linVelInt("(paper) Linear veocity", dt),	// 3x1 vector
 			   linPosInt("(paper) Position", dt),		// 3x1 vector
 			   d_RInt("(paper) d_R", dt),				// 3x3 matrix
@@ -581,8 +581,6 @@ void genSymbolicEquations(void) {
 	equations.d_phi = equations.phi.diff(St);
 	equations.d_theta = equations.theta.diff(St);
 	equations.d_psi = equations.psi.diff(St);
-			// NOTE: ^ we shouldn't diff this but get from omega (ok for now:
-			// small angles assumption)
 
 	// Euler rates rpy to angular velocity (remeber: the result is omega in local frame)
 	equations.omega = rpyRate2omega(matrix({{equations.d_phi},{equations.d_theta},{equations.d_psi}}),
@@ -660,6 +658,7 @@ void setVrepInitialState(void) {
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_y, (float)state.vy);
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_z, (float)state.vz);
 
+	// velocity abg params set the angular velocity instead
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_a,
 			(simFloat)state.p);
 	simSetObjectFloatParameter(quadcopterH, sim_shapefloatparam_init_velocity_b,
@@ -824,6 +823,7 @@ void debugging(Inputs& inputs, State& state) {
 	// >> End integration
 	
 
+#ifdef DEBUG_PRINT_DEBUG
 	// >> Compare estimated and measured angular velocity (just printing, the
 	// integration is not used here)
 
@@ -853,12 +853,8 @@ void debugging(Inputs& inputs, State& state) {
 		// These are all valid measures and correspond to equations angvel under integration
 	cout << "measure my   angvel: " << vrepAngVel << endl;
 	cout << "measure vrep angvel: " << GINAC_3VEC(vrepAngVelSim) << endl;
-	cout << "measure pos: " << matrix({{state.x}, {state.y}, {state.z}}) << endl;
-	cout << "paper " << endl;
-	cout << "u_torque    : " << u_torque << endl;
-	cout << "u_torqueGlob: " << (equations.R.evalf() * u_torque).evalm() << endl;
-	cout << "omegaGlobInt: " << omegaGlobInt << endl;
 	cout << endl;
+#endif
 
 }
 
@@ -877,13 +873,6 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	matrix Rpaper = matrixVrepTransform(Rvrep);
 	matrix rpy = matrix2rpy(Rpaper);
 	double yaw = EX_TO_DOUBLE(rpy(2,0));
-
-	// debug
-	/*
-	cout << "updateState()\n";
-	cout << "abg " << matrix({{a}, {b}, {g}}) << endl;
-	cout << "rpy " << rpy << endl;
-	*/
 
 	// Evaluate the D4 vectors numerically
 	exmap symMap;
