@@ -3,10 +3,10 @@
 #include "libv_repExtSymDeriv.hpp"
 
 
-#define DEBUG
-#define DEBUG_PRINT_INIT
+// #define DEBUG
+// #define DEBUG_PRINT_INIT
 // #define DEBUG_PRINT_FLAT_OUTPUTS
-#define DEBUG_PRINT_INPUTS
+// #define DEBUG_PRINT_INPUTS
 // #define DEBUG_SET_INTEGRATION
 
 
@@ -34,8 +34,7 @@ unsigned nVars = 0;					// The number of lines in the vector field file
 // dynamic properties
 float mass = 0;
 matrix J_inertia = {{1,0,0},{0,1,0},{0,0,1}};
-//const float GRAVITY_G = 9.80655;
-const float GRAVITY_G = 2;
+const float GRAVITY_G = 9.80655;
 
 
 /***
@@ -547,14 +546,11 @@ void flatOutputs2inputs(Inputs &inputs) {
 
 	// Compute numeric values for all input equations
 	
+	// this is the torque in paper body convention
 	matrix u_torqueF = ex_to<matrix>(equations.u_torque.evalf());
 
-	// body -> fixed -> fixedVrep -> bodyVrep
-	matrix R = ex_to<matrix>(equations.R.evalf());
-	ex u_torqueGlobal = R * u_torqueF;
-	ex u_torqueGlobalVrepE = vectorVrepTransform(ex_to<matrix>(u_torqueGlobal.evalm()));
-	matrix u_torqueVrepF = ex_to<matrix>(u_torqueGlobalVrepE.evalm());
-
+	// vrep body convention
+	matrix u_torqueVrepF = vectorVrepTransform(u_torqueF);
 
 	inputs.tx = EX_TO_DOUBLE(u_torqueVrepF(0,0));
 	inputs.ty = EX_TO_DOUBLE(u_torqueVrepF(1,0));
@@ -634,8 +630,6 @@ void genSymbolicEquations(void) {
 
 
 void setVrepInitialState(void) {
-
-	// TODO: make the name of the shape parametric
 
 	// Get the initial pose of the quadcopter shape in the vrep scene
 	quadcopterH = simGetObjectHandle("Quadricopter");
