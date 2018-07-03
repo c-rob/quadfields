@@ -5,7 +5,7 @@
 *.so
 
 # The vector field
-/symsplugin/*.txt
+#/symsplugin/*.txt
 
 # The executable version for testing
 /symsplugin/v_repExtSymDeriv
