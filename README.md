@@ -1,4 +1,4 @@
-# SymDeriv V-REP plugin
+# FieldFollow V-REP plugin
 
 This is a V-REP plugin for small symbolic computations written in c++
 It implements equations 8-11 of paper:
@@ -20,10 +20,10 @@ Dingjiang Zhou and Mac Schwager
 ### Notes:
 * The plugin assumes that the quadrotor is a single dynamic shape
         in the vrep scene that is called "Quadrirotor".
-* See "Field controller" scene for usage
+* See the scene "field_controller.ttt" for how to use it.
 * To use the scene, also modify the path of the file vector-field.txt inside
 	the script in the V-REP scene
 * The plugin has been written for V-REP 3.4.0. A newer API might require
 		minor changes in the code.
 * Euler angles singularity at 90° pitch
-* Tested with ODE, Bullet <=2.83
+* Tested with ODE and Bullet <=2.83

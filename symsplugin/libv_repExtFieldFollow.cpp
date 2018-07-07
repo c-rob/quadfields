@@ -1,6 +1,6 @@
 // This file was created for V-REP release V3.4.0 
 
-#include "libv_repExtSymDeriv.hpp"
+#include "libv_repExtFieldFollow.hpp"
 
 
 // #define DEBUG
@@ -180,14 +180,14 @@ static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
 
 
 // --------------------------------------------------------------------------------------
-// simExtSymDeriv_init
+// simExtFieldFollow_init
 // --------------------------------------------------------------------------------------
-#define LUA_INIT_COMMAND "simExtSymDeriv_init"
+#define LUA_INIT_COMMAND "simExtFieldFollow_init"
  
 // --------------------------------------------------------------------------------------
-// simExtSymDeriv_update
+// simExtFieldFollow_update
 // --------------------------------------------------------------------------------------
-#define LUA_UPDATE_COMMAND "simExtSymDeriv_update"
+#define LUA_UPDATE_COMMAND "simExtFieldFollow_update"
 
 const int inArgs_INIT[]={
 	3,
@@ -984,10 +984,10 @@ VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
 	}
 
 	// Register the lua commands
-	simRegisterScriptCallbackFunction(strConCat(LUA_INIT_COMMAND,"@","SymDeriv"),
+	simRegisterScriptCallbackFunction(strConCat(LUA_INIT_COMMAND,"@","FieldFollow"),
 			strConCat("number ok = ",LUA_INIT_COMMAND,"(string filePath, number mass, table9 inertia_matrix)"),LUA_INIT_CALLBACK);
 
-	simRegisterScriptCallbackFunction(strConCat(LUA_UPDATE_COMMAND,"@","SymDeriv"),
+	simRegisterScriptCallbackFunction(strConCat(LUA_UPDATE_COMMAND,"@","FieldFollow"),
 			strConCat("",LUA_UPDATE_COMMAND,"(number x, number y, number z, number yaw)"),LUA_UPDATE_CALLBACK);
 
 
