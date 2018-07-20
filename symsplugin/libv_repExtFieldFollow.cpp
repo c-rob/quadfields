@@ -190,7 +190,8 @@ static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
 #define LUA_UPDATE_COMMAND "simExtFieldFollow_update"
 
 const int inArgs_INIT[]={
-	3,
+	4,
+	sim_script_arg_string,1,
 	sim_script_arg_string,1,
 	sim_script_arg_double,1,
 	sim_script_arg_table | sim_script_arg_double,9,
@@ -211,19 +212,22 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 		// fileName
 		std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
 		string fileName = inData->at(0).stringData[0];
+		
+		// shape name
+		string shapeName = inData->at(1).stringData[0];
 
 		// mass
-		mass = inData->at(1).doubleData[0];
+		mass = inData->at(2).doubleData[0];
 
 		// inertia matrix
 		for (unsigned r = 0; r < 3; ++r) {
 			for (unsigned c = 0; c < 3; ++c) {
-				J_inertia(r,c) = inData->at(2).doubleData[r*3+c];
+				J_inertia(r,c) = inData->at(3).doubleData[r*3+c];
 			}
 		}
 
 		// call
-		ret = initField(fileName, true);
+		ret = initField(fileName, shapeName, true);
 	}
 	D.pushOutData(CScriptFunctionDataItem(ret));
 	D.writeDataToStack(cb->stackID);
@@ -404,13 +408,13 @@ matrix rpyRate2omega(matrix rpyRate, matrix rpy) {
 		{ 1, 0, -sin(rpy(1,0))},
 		{ 0, cos(rpy(0,0)), cos(rpy(1,0))*sin(rpy(0,0))},
 		{ 0, -sin(rpy(0,0)), cos(rpy(0,0))*cos(rpy(1,0))}};
-
-// This is the standart T to get omega in fixed frame, using the upper version
-//	to get omega in body frame
-//		{ cos(rpy(2,0))*cos(rpy(1,0)), -sin(rpy(2,0)), 0 },
-//		{ sin(rpy(2,0))*cos(rpy(1,0)), cos(rpy(2,0)), 0 },
-//		{ -sin(rpy(1,0)), 0, 1 }};
-
+	
+	// This is the standart T to get omega in fixed frame, using the upper version
+	//	to get omega in body frame
+	//		{ cos(rpy(2,0))*cos(rpy(1,0)), -sin(rpy(2,0)), 0 },
+	//		{ sin(rpy(2,0))*cos(rpy(1,0)), cos(rpy(2,0)), 0 },
+	//		{ -sin(rpy(1,0)), 0, 1 }};
+	
 	return T.mul(rpyRate);
 }
 
@@ -577,8 +581,6 @@ void genSymbolicEquations(void) {
 	equations.d_phi = equations.phi.diff(St);
 	equations.d_theta = equations.theta.diff(St);
 	equations.d_psi = equations.psi.diff(St);
-			// NOTE: ^ we shouldn't diff this but get from omega (ok for now:
-			// small angles assumption)
 
 	// Euler rates rpy to angular velocity (remeber: the result is omega in local frame)
 	equations.omega = rpyRate2omega(matrix({{equations.d_phi},{equations.d_theta},{equations.d_psi}}),
@@ -629,10 +631,10 @@ void genSymbolicEquations(void) {
 }
 
 
-void setVrepInitialState(void) {
+void setVrepInitialState(string shapeName) {
 
 	// Get the initial pose of the quadcopter shape in the vrep scene
-	quadcopterH = simGetObjectHandle("Quadricopter");
+	quadcopterH = simGetObjectHandle(shapeName.c_str());
 	float initVrepPos[3];
 	float initVrepAbg[3];
 	simGetObjectOrientation(quadcopterH, -1, initVrepAbg);
@@ -693,7 +695,7 @@ void setVrepInitialState(void) {
 }
 
 
-int initField(string fieldFilePath, bool vrepCaller) {
+int initField(string fieldFilePath, string shapeName, bool vrepCaller) {
 
 	string line;
 	ifstream vectFile;
@@ -746,7 +748,7 @@ int initField(string fieldFilePath, bool vrepCaller) {
 
 	// Assigns initial config in vrep scene to match the vector field
 	if (vrepCaller) {
-		setVrepInitialState();
+		setVrepInitialState(shapeName);
 	}
 
 	return true;
@@ -1125,7 +1127,7 @@ int main() {
 	cout << "Mass: " << mass << endl;
 	cout << "Inertia: " << J_inertia << endl;
 
-	initField("./vector-field.txt", false);
+	initField("./vector-field.txt", nullptr, false);
 
 	// set a fictitious pose
 	float x = 1;

@@ -48,9 +48,10 @@ struct Inputs {
 
 
 // custom commands
-int initField(std::string fieldFilePath, bool vrepCaller);	// read vector field file equations
+int initField(std::string fieldFilePath, std::string shapeName, bool vrepCaller);
+		// read vector field file equations
 void updateState(Inputs &inputs, double x, double y, double z, double yaw);
-								// Eval symbolic equations
+		// Eval symbolic equations
 
 
 // The 3 required entry points of the V-REP plugin:
