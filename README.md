@@ -1,9 +1,13 @@
 # FieldFollow V-REP plugin
 
-This is a V-REP plugin for small symbolic computations written in c++
-It implements equations 8-11 of paper:
-Vector Field Following for Quadrotors using Differential Flatness
-Dingjiang Zhou and Mac Schwager
+This is a V-REP plugin that implements a controller for a quadrotor model, written in C++.
+
+The controller is described in:
+D. Zhou and M. Schwager, “Vector Field Following
+for Quadrotors using Differential Flatness”, In Proc. of the International
+Conference on Robotics and Automation (ICRA 14), June, 2014, pp.  6567-6572.
+
+This software is not related in any way with the authors of this paper.
 
 ## Dependencies:
 * libginac-dev
@@ -15,15 +19,12 @@ Dingjiang Zhou and Mac Schwager
 	directory
 * cd to the symsplugin directory
 * Run "make mklib" to build the library or "make install" to build
-	and copy to the v-rep installation directory
+	and copy it to the V-REP installation directory
 
 ### Notes:
-* The plugin assumes that the quadrotor is a single dynamic shape
-        in the vrep scene that is called "Quadrirotor".
-* See the scene "field_controller.ttt" for how to use it.
+* See the scene "field_controller.ttt" for an example of usage.
 * To use the scene, also modify the path of the file vector-field.txt inside
-	the script in the V-REP scene
-* The plugin has been written for V-REP 3.4.0. A newer API might require
-		minor changes in the code.
+	the main quadrotor child script.
+* The plugin has been written for V-REP 3.4.0.
 * Euler angles singularity at 90° pitch
-* Tested with ODE and Bullet <=2.83
+* Tested with ODE and Bullet <=2.83 (not working with Vortex)
