@@ -41,6 +41,15 @@
 
 #define PLUGIN_VERSION 4 // 2 since version 3.2.1, 3 since V3.3.1, 4 since V3.4.0
 
+using GiNaC::matrix;
+
+
+// State vector; saved in vrep conventions (angles and frames)
+//		p,q,r is the angular velocity in global vrep frame
+struct State {
+	double x, y, z, vx, vy, vz, a, b, g, p, q, r;
+};
+
 // input vector: thrust + torques in v_vrep axis convention
 struct Inputs {
 	double fz, tx, ty, tz;
@@ -52,6 +61,9 @@ int initField(std::string fieldFilePath, std::string shapeName, bool vrepCaller)
 		// read vector field file equations
 void updateState(Inputs &inputs, double x, double y, double z, double yaw);
 		// Eval symbolic equations
+void simpleFeedback(Inputs &inputs, State &estState, const matrix &xyz,
+		const matrix &abg, const matrix &v, const matrix &omega,
+		const matrix &gains);
 
 
 // The 3 required entry points of the V-REP plugin:

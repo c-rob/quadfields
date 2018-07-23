@@ -30,6 +30,7 @@ bool cln::cl_inhibit_floating_point_underflow = true; // no underflow exception
  ***/
 int quadcopterH = -1;				// vrep handle
 unsigned nVars = 0;					// The number of lines in the vector field file
+unsigned long nIter = 0;			// The number of times updateState has been called
 
 // dynamic properties
 float mass = 0;
@@ -46,11 +47,8 @@ ex flatOut2[4];
 ex flatOut3[4];
 ex flatOut4[4];
 
-// State vector; saved in vrep conventions (angles and frames)
-//		p,q,r is the angular velocity in global vrep frame
-struct State {
-	double x, y, z, vx, vy, vz, a, b, g, p, q, r;
-};
+
+// State vector defined in header
 
 // Input vecotor struct defined in header
 
@@ -183,12 +181,6 @@ static ex evalf_symF(const ex &var, const ex &nDiff, const ex &t) {
 // simExtFieldFollow_init
 // --------------------------------------------------------------------------------------
 #define LUA_INIT_COMMAND "simExtFieldFollow_init"
- 
-// --------------------------------------------------------------------------------------
-// simExtFieldFollow_update
-// --------------------------------------------------------------------------------------
-#define LUA_UPDATE_COMMAND "simExtFieldFollow_update"
-
 const int inArgs_INIT[]={
 	4,
 	sim_script_arg_string,1,
@@ -196,13 +188,7 @@ const int inArgs_INIT[]={
 	sim_script_arg_double,1,
 	sim_script_arg_table | sim_script_arg_double,9,
 };
-const int inArgs_UPDATE[]={
-	2,
-	sim_script_arg_table | sim_script_arg_double,3,
-	sim_script_arg_table | sim_script_arg_double,3,
-};
-
-
+ 
 void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 { 
 	CScriptFunctionData D;
@@ -234,7 +220,16 @@ void LUA_INIT_CALLBACK(SScriptCallBack* cb)
 }
 
  
-
+// --------------------------------------------------------------------------------------
+// simExtFieldFollow_update
+// --------------------------------------------------------------------------------------
+#define LUA_UPDATE_COMMAND "simExtFieldFollow_update"
+const int inArgs_UPDATE[]={
+	2,
+	sim_script_arg_table | sim_script_arg_double,3,
+	sim_script_arg_table | sim_script_arg_double,3,
+};
+ 
 void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 { 
 	CScriptFunctionData D;
@@ -261,6 +256,67 @@ void LUA_UPDATE_CALLBACK(SScriptCallBack* cb)
 	D.pushOutData(CScriptFunctionDataItem(inputs.tz));
 	D.writeDataToStack(cb->stackID);
 }
+
+
+// --------------------------------------------------------------------------------------
+// simExtFieldFollow_updateFeedback
+// --------------------------------------------------------------------------------------
+#define LUA_UPDATEFEEDBACK_COMMAND "simExtFieldFollow_updateFeedback"
+const int inArgs_UPDATEFEEDBACK[]={
+	5,
+	sim_script_arg_table | sim_script_arg_double,3,
+	sim_script_arg_table | sim_script_arg_double,3,
+	sim_script_arg_table | sim_script_arg_double,3,
+	sim_script_arg_table | sim_script_arg_double,3,
+	sim_script_arg_table | sim_script_arg_double,4,
+};
+
+void LUA_UPDATEFEEDBACK_CALLBACK(SScriptCallBack* cb)
+{ 
+	CScriptFunctionData D;
+	Inputs inputs;
+	if (D.readDataFromStack(cb->stackID,inArgs_UPDATEFEEDBACK,inArgs_UPDATEFEEDBACK[0],LUA_UPDATE_COMMAND))
+	{
+		std::vector<CScriptFunctionDataItem>* inData=D.getInDataPtr();
+		double x = inData->at(0).doubleData[0];
+		double y = inData->at(0).doubleData[1];
+		double z = inData->at(0).doubleData[2];
+		double a = inData->at(1).doubleData[0];
+		double b = inData->at(1).doubleData[1];
+		double g = inData->at(1).doubleData[2];
+		double vx = inData->at(2).doubleData[0];
+		double vy = inData->at(2).doubleData[1];
+		double vz = inData->at(2).doubleData[2];
+		double omegax = inData->at(3).doubleData[0];
+		double omegay = inData->at(3).doubleData[1];
+		double omegaz = inData->at(3).doubleData[2];
+		double gainsx = inData->at(4).doubleData[0];
+		double gainsa = inData->at(4).doubleData[1];
+		double gainsv = inData->at(4).doubleData[2];
+		double gainso = inData->at(4).doubleData[3];
+
+		// call
+		State state;
+		updateState(inputs, state, x, y, z, a, b, g);
+
+		if (nIter > 4) {
+			simpleFeedback(inputs, state,
+					matrix{{x},{y},{z}},
+					matrix{{a},{b},{g}},
+					matrix{{vx},{vy},{vz}},
+					matrix{{omegax},{omegay},{omegaz}},
+					matrix{{gainsx},{gainsa},{gainsv},{gainso}});
+		}
+	}
+
+	// return quadrotor inputs
+	D.pushOutData(CScriptFunctionDataItem(inputs.fz));
+	D.pushOutData(CScriptFunctionDataItem(inputs.tx));
+	D.pushOutData(CScriptFunctionDataItem(inputs.ty));
+	D.pushOutData(CScriptFunctionDataItem(inputs.tz));
+	D.writeDataToStack(cb->stackID);
+}
+
 // --------------------------------------------------------------------------------------
 
 
@@ -294,6 +350,14 @@ matrix floats2matrix(const float f[12]) {
 		}
 	}
 	return m;
+}
+
+
+inline matrix skewMatrix(const matrix &vec) {
+	
+	return matrix{{0, -vec(2,0), vec(1,0)},
+			{vec(2,0), 0, -vec(0,0)},
+			{-vec(1,0), vec(0,0), 0}};
 }
 
 
@@ -480,6 +544,9 @@ matrix abgRate2omegaVrep(matrix abgRate, matrix abg) {
 }
 
 
+// >>> end of the utility functions
+
+
 // given the vector of the variables, the symbolic vector src in inputs
 // computes the next derivative through dv/dt = J_v(x) * dx/dt
 //	NOTE: This is different from the reference paper! They wrote dv/dt = J_v(x) * v
@@ -591,9 +658,7 @@ void genSymbolicEquations(void) {
 
 
 	// omega = [0, −r, q; r, 0, −p; −q, p, 0]  (in local frame too)
-	matrix skewOmega = {{0, -equations.omega(2,0), equations.omega(1,0)},
-						{equations.omega(2,0), 0, -equations.omega(0,0)},
-						{-equations.omega(1,0), equations.omega(0,0), 0}};
+	matrix skewOmega = skewMatrix(equations.omega);
 
 	// Inputs: torque
 	ex temp_u_torque = J_inertia * equations.d_omega + skewOmega * J_inertia * equations.omega;
@@ -874,13 +939,6 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	matrix rpy = matrix2rpy(Rpaper);
 	double yaw = EX_TO_DOUBLE(rpy(2,0));
 
-	// debug
-	/*
-	cout << "updateState()\n";
-	cout << "abg " << matrix({{a}, {b}, {g}}) << endl;
-	cout << "rpy " << rpy << endl;
-	*/
-
 	// Evaluate the D4 vectors numerically
 	exmap symMap;
 	symMap[Sx] = x;
@@ -928,10 +986,69 @@ void updateState(Inputs &inputs, State &state, double x, double y, double z,
 	cout << "Inputs [fz, tx, ty, tz]: [" << inputs.fz << ", " << inputs.tx <<
 		", " << inputs.ty << ", " << inputs.tz << "]\n\n";
 #endif
-
+	
+	++nIter;
 }
 
 
+/**********************************************************************************
+* >> simpleFeedback()                                                             *
+* TODO: debugging                                                                 *
+* This feedback controller is a simplified version of the SE(3)                   *
+* controller. It just add proportional actions compensating for the errors of     *
+* the state vector. The output is summed with 'inputs' and saved in inputs again. *
+* NOTE: it assumes that updateState has been executed.                            *
+*                                                                                 *
+* Args:                                                                           *
+*     inputs (Inputs): the control inputs computed; this is the result            *
+*     estState (State): the estimated/desired state vector                        *
+*     xyz (3x1 matrix): current position in vrep space                            *
+*     abg (3x1 matrix): current orientation in vrep angles                        *
+*     v (3x1 matrix): current linear velocity, vrep                               *
+*     omega (3x1 matrix): current angular velocity, vrep body frame               *
+*     gains (4x1 matrix): the four gains to use for pos, vel, abg, omega          *
+**********************************************************************************/
+void simpleFeedback(Inputs &inputs, State &estState, const matrix &xyz,
+		const matrix &abg, const matrix &v, const matrix &omega,
+		const matrix &gains) {
+
+	matrix e3{{0},{0},{1}};
+	cout << "gains " << gains << endl;
+
+	// Defining position and velocity errors
+	matrix xyzDes{{estState.x},{estState.y},{estState.z}};
+	matrix vDes{{estState.vx},{estState.vy},{estState.vz}};
+	ex xyzErr = xyz - xyzDes;
+	ex vErr = v - vDes;
+
+	// Defining attitude and angular velocity errors
+	matrix abgDes{{estState.a},{estState.b},{estState.g}};
+	matrix omegaDes{{estState.p},{estState.q},{estState.r}};
+	matrix RDes(abg2matrix(abgDes));
+	matrix R(abg2matrix(abg));
+
+	matrix RS(ex_to<matrix>((RDes.transpose()*R - R.transpose()*RDes).evalm()));
+	ex RErr = matrix{{RS(2,1)},{-RS(2,0)},{RS(1,0)}}; // 1/2 scale removed
+	ex omegaErr = omega - R.transpose() * RDes * omegaDes;
+
+	// Gains
+	ex Kp = gains(0,0) * diag_matrix({1,1,1});
+	ex Kv = gains(1,0) * diag_matrix({1,1,1}); 
+	ex Kr = gains(2,0) * diag_matrix({1,1,1}); 
+	ex Ko = gains(3,0) * diag_matrix({1,1,1}); 
+	
+	// Control
+	ex thrust = (R.mul(e3)).transpose() * (Kp * xyzErr + Kv * vErr);
+	ex torque = - Kr * RErr - Ko * omegaErr;
+
+	matrix thrustM(ex_to<matrix>(thrust.evalm()));
+	matrix torqueM(ex_to<matrix>(torque.evalm()));
+
+	inputs.fz += (thrustM(0,0)>0)? EX_TO_FLOAT(thrustM(0,0)): 0;
+	inputs.tx += EX_TO_FLOAT(torqueM(0,0));
+	inputs.ty += EX_TO_FLOAT(torqueM(1,0));
+	inputs.tz += EX_TO_FLOAT(torqueM(2,0));
+}
 
 
 // This is the plugin start routine (called just once, just after the plugin was loaded):
@@ -987,11 +1104,16 @@ VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
 
 	// Register the lua commands
 	simRegisterScriptCallbackFunction(strConCat(LUA_INIT_COMMAND,"@","FieldFollow"),
-			strConCat("number ok = ",LUA_INIT_COMMAND,"(string filePath, number mass, table9 inertia_matrix)"),LUA_INIT_CALLBACK);
+			strConCat("number ok = ",LUA_INIT_COMMAND,"(string filePath, string shapeName, number mass, table9 inertiaMatrix)"),
+			LUA_INIT_CALLBACK);
 
 	simRegisterScriptCallbackFunction(strConCat(LUA_UPDATE_COMMAND,"@","FieldFollow"),
-			strConCat("",LUA_UPDATE_COMMAND,"(number x, number y, number z, number yaw)"),LUA_UPDATE_CALLBACK);
+			strConCat("",LUA_UPDATE_COMMAND,"(table3 xyx, table3 abg)"),
+			LUA_UPDATE_CALLBACK);
 
+	simRegisterScriptCallbackFunction(strConCat(LUA_UPDATEFEEDBACK_COMMAND,"@","FieldFollow"),
+			strConCat("",LUA_UPDATEFEEDBACK_COMMAND,"(table3 xyz, table3 abg, table3 v, table3 omegaBodyFrame, table4 gains)"),
+			LUA_UPDATEFEEDBACK_CALLBACK);
 
 	return(PLUGIN_VERSION); // initialization went fine, we return the version number of this plugin (can be queried with simGetModuleName)
 }
@@ -1116,7 +1238,6 @@ VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customDat
 }
 
 
-
 int main() {
 	
 	// Set the same Vrep dynamic properties
@@ -1124,10 +1245,8 @@ int main() {
 	J_inertia.set(0,0, 0.006);
 	J_inertia.set(1,1, 0.006);
 	J_inertia.set(2,2, 0.011);
-	cout << "Mass: " << mass << endl;
-	cout << "Inertia: " << J_inertia << endl;
 
-	initField("./vector-field.txt", nullptr, false);
+	initField("./circle-field.txt", "", false);
 
 	// set a fictitious pose
 	float x = 1;
@@ -1135,70 +1254,19 @@ int main() {
 	float z = 1;
 	float a = 0;
 	float b = 0;
-	// float g = 3.14159265359/2;
 	float g = 0;
 	Inputs inputs;
 	State state;
 	updateState(inputs, state, x, y, z, a, b, g);
 
-	// Print flat outputs
-	cout << "Flat outputs\n";
-	cout << "flatOut: " << flatOut[0] << ", " << flatOut[1] << ", " <<
-		flatOut[2] << ", " << flatOut[3] << endl;
-	cout << "flatOut1: " << flatOut1[0] << ", " << flatOut1[1] << ", " <<
-		flatOut1[2] << ", " << flatOut1[3] << endl;
-	cout << "flatOut2: " << flatOut2[0] << ", " << flatOut2[1] << ", " <<
-		flatOut2[2] << ", " << flatOut2[3] << endl;
-	cout << "flatOut3: " << flatOut3[0] << ", " << flatOut3[1] << ", " <<
-		flatOut3[2] << ", " << flatOut3[3] << endl;
-	cout << "flatOut4: " << flatOut4[0] << ", " << flatOut4[1] << ", " <<
-		flatOut4[2] << ", " << flatOut4[3] << "\n\n";
+	// Debugging
+	simpleFeedback(inputs, state, matrix{{state.x},{state.y+0.05},{state.z-0.2}}, 
+			matrix{{state.vx},{state.vy},{state.vz}},
+			matrix{{state.a+0.1},{state.b},{state.g}},
+			matrix{{state.p},{state.q},{state.r}},
+			matrix{{0},{0},{0},{0}});
 
-	// Evaluate all equations: these are well tested
-	matrix rpy = {{equations.phi.evalf()},{equations.theta.evalf()},{equations.psi.evalf()}};
-	matrix d_rpy = {{equations.d_phi.evalf()},{equations.d_theta.evalf()},{equations.d_psi.evalf()}};
-	matrix omega = ex_to<matrix>(equations.omega.evalf());
-	matrix d_omega = ex_to<matrix>(equations.d_omega.evalf());
-	matrix R = ex_to<matrix>(equations.R.evalf());
-	matrix d_R = ex_to<matrix>(equations.d_R.evalf());
-	matrix dd_R = ex_to<matrix>(equations.dd_R.evalf());
-	matrix Omega = R.transpose().mul(d_R);
-	ex d_OmegaEx = d_R.transpose() * d_R + R.transpose() * dd_R;
-	matrix d_Omega = ex_to<matrix>(d_OmegaEx.evalm());
-	ex u_thrust = (equations.u_thrust.evalf());
-	matrix u_torque = ex_to<matrix>(equations.u_torque.evalf());
-	
-	cout << "Paper equations\n";
-	cout << "rpy:	" << rpy << endl;
-	cout << "d_rpy: " << d_rpy << endl;
-	cout << "omega: " << omega << endl;
-	cout << "omegaGlob " << (R.mul(omega)) << endl;
-	cout << "Omega: " << Omega.evalf() << endl;
-	cout << "d_omega: " << d_omega << endl;
-	cout << "d_omegaGlob " << (R.mul(d_omega)) << endl;
-	cout << "R:		" << R << endl;
-	cout << "d_R:	" << d_R << endl;
-	cout << "dd_R:	 " << dd_R << endl;
-	cout << "Omega:		" << Omega << endl;
-	cout << "d_Omega:	" << d_Omega << endl;
-	cout << "u_thrust:	 " << u_thrust << endl;
-	cout << "u_torque:	 " << u_torque << endl;
-	cout << "torqGlob " << (R.mul(u_torque)) << endl;
-
-	
-	// Checking that the system equations are the inverse of the endogenous: done
-	matrix e3 = {{0},{0},{1}};
-	ex accel = (GRAVITY_G * e3 - R * (u_thrust * e3 / mass)).evalm();
-	ex angAcc = (J_inertia.inverse() * (u_torque - Omega * J_inertia * omega)).evalm();
-
-	cout << "From inputs u_* back to dynamics: " << endl;
-	cout << "accel: " << accel << endl;	
-	cout << "angAcc: " << angAcc << endl << endl;
-
-
-	// checking angular velocity consistency
-	cout << "omega in v0: " << state.p << ", " << state.q << ", " << state.r << endl;
-	matrix omegaP0 = ex_to<matrix>((R * omega).evalm());
-	cout << "omega in p0: " << omegaP0 << endl;
-	cout << "omega in v0: " << vectorVrepTransform(omegaP0) << endl;
+	cout << "simpleFeedback out\n";
+	cout << inputs.fz << ", " << inputs.tx << ", " << inputs.ty << ", " <<
+			inputs.tz << endl;
 }
